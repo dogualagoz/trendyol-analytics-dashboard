@@ -56,3 +56,51 @@ export const mockOrderMetrics = {
   avgProfitPerOrder: 168,
   avgCargoPerOrder: 42,
 }
+
+export const mockTopProducts = [
+  {
+    id: "1",
+    name: "Erkek Slim Fit Pamuk Gömlek",
+    sku: "EG-SL-001",
+    category: "Giyim",
+    status: "IN_STOCK" as const,
+    unitsSold: 342,
+    revenue: 28_500,
+  },
+  {
+    id: "2",
+    name: "Kadın Oversize Sweatshirt",
+    sku: "KO-SW-084",
+    category: "Giyim",
+    status: "LOW_STOCK" as const,
+    unitsSold: 189,
+    revenue: 18_710,
+  },
+  {
+    id: "3",
+    name: "Unisex Spor Koşu Ayakkabısı",
+    sku: "UA-KA-042",
+    category: "Ayakkabı",
+    status: "IN_STOCK" as const,
+    unitsSold: 124,
+    revenue: 14_880,
+  },
+  {
+    id: "4",
+    name: "Deri Kemer — Kahverengi",
+    sku: "DK-KH-011",
+    category: "Aksesuar",
+    status: "IN_STOCK" as const,
+    unitsSold: 97,
+    revenue: 8_245,
+  },
+  {
+    id: "5",
+    name: "Çocuk Kapüşonlu Polar Mont",
+    sku: "CK-PL-033",
+    category: "Çocuk",
+    status: "OUT_OF_STOCK" as const,
+    unitsSold: 63,
+    revenue: 6_615,
+  },
+]

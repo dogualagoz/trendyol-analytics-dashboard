@@ -30,31 +30,45 @@ export function CostDistributionChart({ data }: Props) {
   const total = data.reduce((sum, d) => sum + d.value, 0)
 
   return (
-    <div className="flex flex-col gap-4">
-      <ResponsiveContainer width="100%" height={200}>
-        <PieChart>
-          <Pie
-            data={data}
-            cx="50%"
-            cy="50%"
-            innerRadius={60}
-            outerRadius={90}
-            paddingAngle={2}
-            dataKey="value"
-            strokeWidth={0}
-          >
-            {data.map((entry) => (
-              <Cell key={entry.name} fill={entry.color} />
-            ))}
-          </Pie>
-          <Tooltip content={<CustomTooltip />} />
-        </PieChart>
-      </ResponsiveContainer>
+    <div className="flex flex-col gap-5">
+      {/* Donut + center label */}
+      <div className="relative">
+        <ResponsiveContainer width="100%" height={200}>
+          <PieChart>
+            <Pie
+              data={data}
+              cx="50%"
+              cy="50%"
+              innerRadius={62}
+              outerRadius={90}
+              paddingAngle={2}
+              dataKey="value"
+              strokeWidth={0}
+              startAngle={90}
+              endAngle={-270}
+            >
+              {data.map((entry) => (
+                <Cell key={entry.name} fill={entry.color} />
+              ))}
+            </Pie>
+            <Tooltip content={<CustomTooltip />} />
+          </PieChart>
+        </ResponsiveContainer>
+        {/* Orta yazı */}
+        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-[#574236]">
+            Toplam Maliyet
+          </span>
+          <span className="text-base font-bold text-[#1a1c1c] tabular-nums mt-0.5">
+            {formatCurrency(total)}
+          </span>
+        </div>
+      </div>
 
       {/* Legend */}
-      <div className="space-y-2">
+      <div className="space-y-2.5">
         {data.map((item) => {
-          const pct = ((item.value / total) * 100).toFixed(1)
+          const pct = ((item.value / total) * 100).toFixed(0)
           return (
             <div key={item.name} className="flex items-center justify-between text-xs">
               <div className="flex items-center gap-2 min-w-0">
@@ -64,14 +78,9 @@ export function CostDistributionChart({ data }: Props) {
                 />
                 <span className="text-[#574236] truncate">{item.name}</span>
               </div>
-              <div className="flex items-center gap-2 shrink-0 pl-2">
-                <span className="text-[#1a1c1c] font-medium tabular-nums">
-                  {formatCurrency(item.value)}
-                </span>
-                <span className="text-[#574236] w-10 text-right tabular-nums">
-                  %{pct}
-                </span>
-              </div>
+              <span className="text-[#1a1c1c] font-semibold tabular-nums shrink-0 pl-2">
+                %{pct}
+              </span>
             </div>
           )
         })}
