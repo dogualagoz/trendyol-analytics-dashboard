@@ -23,6 +23,9 @@ Referans ürün: [Melontik](https://melontik.com/dashboard) — benzer özellik 
 | Process Yönetimi (prod) | PM2 |
 | Hosting | VPS + Plesk (Node.js app) |
 
+> **Not:** shadcn/ui henüz kurulmadı. Kurulum: `npx shadcn-ui@latest init`
+> Yeni bileşen eklemek için: `npx shadcn-ui@latest add <bileşen-adı>`
+
 ---
 
 ## Mimari
@@ -36,18 +39,20 @@ src/
 │   │   └── login/               # Giriş sayfası
 │   ├── (dashboard)/             # Korumalı sayfalar (layout ile auth kontrolü)
 │   │   ├── page.tsx             # Ana dashboard
-│   │   ├── urunler/             # Ürün listesi ve maliyet girişi
-│   │   ├── siparisler/          # Sipariş listesi
-│   │   ├── iadeler/             # İade metrikleri
-│   │   ├── fiyatlandirma/       # Fiyat hesaplayıcı
-│   │   ├── raporlar/            # Karlılık raporları ve analizler
-│   │   ├── canli/               # Canlı performans (bugünkü kar)
-│   │   └── ayarlar/             # API credentials, genel ayarlar
+│   │   ├── products/            # Ürün listesi ve maliyet girişi
+│   │   ├── orders/              # Sipariş listesi
+│   │   ├── returns/             # İade metrikleri
+│   │   ├── pricing/             # Fiyat hesaplayıcı
+│   │   ├── reports/             # Karlılık raporları ve analizler
+│   │   ├── live/                # Canlı performans (bugünkü kar)
+│   │   └── settings/            # API credentials, genel ayarlar
 │   └── api/
 │       ├── auth/                # NextAuth endpoint
 │       ├── trendyol/            # Trendyol API proxy (key güvenliği)
-│       ├── urunler/             # Ürün CRUD
-│       ├── siparisler/          # Sipariş sorguları
+│       ├── products/            # Ürün CRUD
+│       ├── orders/              # Sipariş sorguları
+│       ├── returns/             # İade sorguları
+│       ├── settings/            # Ayar okuma/yazma
 │       └── sync/                # Veri senkronizasyon tetikleyici
 ├── components/
 │   ├── ui/                      # shadcn bileşenleri (dokunma)
@@ -59,7 +64,11 @@ src/
 │   ├── db.ts                    # Prisma client singleton
 │   ├── trendyol.ts              # Trendyol API client
 │   ├── calculations.ts          # Kar hesaplama formülleri
-│   └── utils.ts                 # Genel yardımcılar (cn, para formatı vs.)
+│   ├── utils.ts                 # Genel yardımcılar (cn, para formatı vs.)
+│   └── mock/                    # Erken aşama mock verileri (UI-first geliştirme)
+│       ├── dashboard.ts         # Dashboard mock metrikleri
+│       ├── orders.ts            # Sipariş mock verisi
+│       └── products.ts          # Ürün mock verisi
 └── types/
     ├── trendyol.ts              # Trendyol API response tipleri
     └── index.ts                 # Uygulama geneli tipler
@@ -71,6 +80,22 @@ src/
 - `lib/` → İş mantığı ve hesaplamalar buraya girer
 - Prisma client doğrudan kullanılır; repository pattern eklenmez
 - Trendyol API key'leri asla client'a çıkmaz, her zaman `app/api/` üzerinden proxy'lenir
+
+### Server vs Client Component Kuralı (Next.js App Router)
+
+- Varsayılan: her bileşen **Server Component**'tir (`'use client'` yazılmaz)
+- `'use client'` yalnızca şu durumlarda eklenir:
+  - `useState`, `useEffect`, `useCallback` gibi React hook kullanılıyorsa
+  - `onClick`, `onChange` gibi event handler varsa
+  - Browser-only API'ye erişiliyorsa (localStorage, window vb.)
+- Kural: Server Component'ten Client Component'e veri prop olarak geçilir, tersi olmaz
+- Grafik bileşenleri (Recharts) `'use client'` gerektirir
+
+### Prisma Client
+
+- Output yolu: `src/generated/prisma` (schema.prisma'da tanımlı)
+- Import: `import { PrismaClient } from '@/generated/prisma'`
+- `lib/db.ts` singleton pattern ile global instance yönetir
 
 ---
 
@@ -190,6 +215,34 @@ Kar = Satış Tutarı - Komisyon - Kargo Payı - Hizmet Bedeli - Stopaj - Net KD
 
 ---
 
+## Tasarım Sistemi
+
+Detaylar `design.md` dosyasında. Referans: **Stitch tasarımı** (`stitch.withgoogle.com` projesi).
+
+- **Font:** Inter (tüm ağırlıklar)
+- **Primary:** `#984700` (Trendyol turuncu koyu) — aktif nav yazısı
+- **Accent/CTA:** `#F27A1A` (Trendyol turuncu) — buton, aktif nav sol çizgisi, vurgu
+- **Background:** `#F9F9F9`
+- **Card:** beyaz zemin, `1rem` border-radius, `1px` `#E2E2E2` border, `0px 4px 20px rgba(0,0,0,0.04)` shadow
+- **Sidebar zemini:** `#FFFFFF` (beyaz) — Stitch tasarımına göre güncellendi
+- **Sidebar aktif item:** sol `3px #F27A1A` çizgi + `orange-50` arka plan + `#984700` koyu turuncu metin
+- **Sidebar pasif item:** `#574236` (on-surface-variant) metin, hover'da `gray-50`
+- **Data viz paleti:** Teal `#00D1FF`, Violet `#7C3AED`, Soft Orange `#FF7F5D`
+- **Spacing ritmi:** 4px base, kartlar arası `24px` gutter, iç padding `24px`
+- **Yazı hiyerarşisi:** `display-lg` 32px/700, `headline-md` 24px/600, `body-md` 14px/400, sayısal veriler tabular figures
+
+### Sidebar Kuralı
+Sidebar beyaz arka planlıdır. Aktif navigasyon öğesi:
+```
+border-l-[3px] border-[#F27A1A] bg-orange-50 text-[#984700] font-semibold pl-[13px]
+```
+Pasif öğe: `text-[#574236] pl-4` (pl-[13px] ile ikon hizası korunur)
+
+### Navbar Kuralı
+Navbar 3 bölüm: sol başlık | orta arama kutusu | sağ aksiyonlar (zil + grid + avatar)
+
+---
+
 ## Geliştirme Prensipleri
 
 - Over-engineering yapma; sade ama düzenli tut
@@ -200,6 +253,30 @@ Kar = Satış Tutarı - Komisyon - Kargo Payı - Hizmet Bedeli - Stopaj - Net KD
 - Türkçe arayüz, İngilizce kod (değişken/fonksiyon isimleri İngilizce)
 - Responsive tasarım (mobil uyumlu)
 - shadcn bileşenlerini `components/ui/` dışında değiştirme
+
+### Geliştirme Döngüsü
+
+Proje iki farklı yaklaşımla ilerler:
+
+**Erken aşama** (uygulama olgunlaşana kadar):
+```
+1. UI önce  → Mock veriyle yap, içine sinene kadar düzenle
+2. Backend  → UI'ın tam ihtiyacına göre tasarla
+3. Bağla    → Mock veriyi gerçek API'a çek
+```
+
+**Olgun aşama** (veri modeli ve UI netleştikten sonra):
+```
+1. Backend  → API route + lib fonksiyonu + DB sorgusu
+2. Frontend → Bileşen + sayfa
+3. Bağla    → Frontend'i backend'e bağla, çalıştığını doğrula
+```
+
+**Her iki yaklaşımda ortak kurallar:**
+- Bir özellik tamamlanmadan bir sonrakine geçilmez
+- Her adımda kullanıcıdan onay beklenir
+- Altyapı değişiklikleri (DB migration, yeni bağımlılık) döngünün dışında ayrıca yapılır
+- Kapsam dışı iyileştirmeler o an yapılmaz, not alınır
 
 ---
 
@@ -228,17 +305,37 @@ DASHBOARD_PASSWORD=...
 
 ---
 
+## Mevcut Durum
+
+**Şu an: Erken Aşama** — UI-first, mock veriyle geliştirme yapılıyor.
+
+- Proje kurulumu tamamlandı (Next.js 14 + TypeScript + Tailwind + Prisma + NextAuth + Recharts)
+- Klasör yapısı oluşturuldu, içerik boş
+- shadcn/ui kurulmadı
+- Prisma şeması boş (migration yapılmadı)
+- Hiç sayfa/bileşen yazılmadı
+
+---
+
 ## Geliştirme Sırası (Yol Haritası)
 
-1. Proje kurulumu (Next.js + Prisma + shadcn + NextAuth)
-2. DB şeması + migration
-3. Trendyol API client + sync mekanizması
-4. Layout (sidebar, navbar)
-5. Ana dashboard sayfası (KPI kartları + grafikler)
-6. Ürün sayfası (liste + maliyet girişi)
-7. Sipariş sayfası
-8. Fiyatlandırma hesaplayıcı
-9. İade metrikleri
-10. Canlı performans
-11. Raporlar + export
-12. Ayarlar sayfası
+### Aşama 1 — Altyapı (tek seferlik, döngü dışı)
+- [x] Proje kurulumu (Next.js 14 + TypeScript + Tailwind)
+- [ ] DB şeması + Prisma migration
+- [ ] shadcn/ui kurulumu
+- [ ] Layout: sidebar + navbar
+- [ ] Auth: login sayfası + middleware
+
+### Aşama 2 — Özellik Döngüleri (backend → frontend → bağla)
+- [ ] Dashboard: Toplam Ciro
+- [ ] Dashboard: Kâr Tutarı
+- [ ] Dashboard: Kâr Oranları
+- [ ] Dashboard: Maliyet Dağılımı (donut grafik)
+- [ ] Dashboard: Kâr Performansı (çizgi grafik)
+- [ ] Ürünler: liste + maliyet girişi
+- [ ] Siparişler: liste + detay
+- [ ] Fiyatlandırma hesaplayıcı
+- [ ] İade metrikleri
+- [ ] Canlı performans
+- [ ] Raporlar + export
+- [ ] Ayarlar sayfası
