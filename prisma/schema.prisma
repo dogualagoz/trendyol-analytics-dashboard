@@ -1,8 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Get a free hosted Postgres database in seconds: `npx create-db`
-
 generator client {
   provider = "prisma-client"
   output   = "../src/generated/prisma"
@@ -10,4 +5,70 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+model Product {
+  id         String      @id @default(cuid())
+  trendyolId String      @unique
+  title      String
+  barcode    String?
+  imageUrl   String?
+  // Satıcının girdiği maliyet — Trendyol API'dan gelmez, kullanıcı elle girer
+  costPrice  Decimal?
+  category   String?
+  brand      String?
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  orderItems OrderItem[]
+}
+
+model Order {
+  id               String      @id @default(cuid())
+  // Trendyol'un kendi sipariş numarası — aynı siparişi iki kez kaydetmemek için unique
+  trendyolOrderId  String      @unique
+  orderDate        DateTime
+  status           String
+  grossAmount      Decimal
+  discountAmount   Decimal     @default(0)
+  commissionAmount Decimal     @default(0)
+  cargoAmount      Decimal     @default(0)
+  serviceFee       Decimal     @default(0)
+  stoppageAmount   Decimal     @default(0)
+  netKdv           Decimal     @default(0)
+  // Satıcının ekleyebileceği ek maliyet (ambalaj, işçilik vb.)
+  extraCost        Decimal     @default(0)
+  createdAt        DateTime    @default(now())
+  items            OrderItem[]
+}
+
+model OrderItem {
+  id         String   @id @default(cuid())
+  orderId    String
+  // Ürün silinse bile sipariş kaydı kaybolmasin diye nullable
+  productId  String?
+  quantity   Int
+  salePrice  Decimal
+  discount   Decimal  @default(0)
+  commission Decimal  @default(0)
+  cargoShare Decimal  @default(0)
+  // Her sync'te yeniden hesaplamak yerine bir kez hesaplanıp saklanır
+  profit     Decimal?
+  order      Order    @relation(fields: [orderId], references: [id])
+  product    Product? @relation(fields: [productId], references: [id])
+}
+
+model Settings {
+  id    String @id @default(cuid())
+  // Trendyol API credentials ve sync ayarları key-value olarak tutulur
+  key   String @unique
+  value String
+}
+
+model SyncLog {
+  id             String   @id @default(cuid())
+  syncedAt       DateTime @default(now())
+  recordsFetched Int      @default(0)
+  // "success" veya "error"
+  status         String
+  errorMessage   String?
 }
