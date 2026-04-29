@@ -29,9 +29,8 @@ async function buildHeaders(): Promise<HeadersInit> {
 
   return {
     "Authorization": `Basic ${token}`,
-    // User-Agent formatı Trendyol tarafından zorunlu tutuluyor
-    "User-Agent": `${sellerId} - SelfIntegration`,
-    "Content-Type": "application/json",
+    "User-Agent":    `${sellerId} - SelfIntegration`,
+    "Content-Type":  "application/json",
   }
 }
 
@@ -65,20 +64,46 @@ export async function getOrders(params: GetOrdersParams): Promise<TrendyolOrder[
       ...(params.status ? { status: params.status } : {}),
     })
 
-    const res = await fetch(
-      `${BASE_URL}/integration/order/sellers/${sellerId}/orders?${query}`,
-      { headers }
-    )
+    const url = `${BASE_URL}/integration/order/sellers/${sellerId}/orders?${query}`
+    console.log("[trendyol] GET", url)
+
+    const res = await fetch(url, { headers })
 
     if (!res.ok) {
-      throw new Error(`Siparişler çekilemedi: ${res.status} ${res.statusText}`)
+      const body = await res.text()
+      console.error("[trendyol] Hata body:", body)
+      throw new Error(`Siparişler çekilemedi: ${res.status} ${res.statusText} — ${body}`)
     }
 
-    const data: TrendyolPage<TrendyolOrder> = await res.json()
-    allOrders.push(...data.content)
+    // Trendyol bazen boş veya null body dönebilir
+    const raw: unknown = await res.json()
+    if (!raw || typeof raw !== "object") {
+      console.warn("[trendyol] Siparişler: null/boş yanıt, sayfa", page)
+      break
+    }
+    const data = raw as TrendyolPage<TrendyolOrder>
+    const content = data.content ?? []
 
-    // İlk istekte kaç sayfa olduğunu öğreniyoruz
-    totalPages = data.totalPages
+    // İlk sayfada ham yanıtı ve ilk sipariş yapısını logla — alan adlarını görmek için
+    if (page === 0) {
+      console.log("[trendyol] Sipariş yanıtı (page 0):", JSON.stringify({
+        totalElements: data.totalElements,
+        totalPages: data.totalPages,
+        contentLength: content.length,
+      }))
+      if (content[0]) {
+        const first = content[0]
+        console.log("[trendyol] İlk sipariş:", JSON.stringify(
+          Object.fromEntries(Object.entries(first).filter(([k]) => k !== "lines")), null, 2
+        ))
+        if (first.lines?.[0]) {
+          console.log("[trendyol] İlk kalem:", JSON.stringify(first.lines[0], null, 2))
+        }
+      }
+    }
+
+    allOrders.push(...content)
+    totalPages = data.totalPages ?? 0
     page++
   }
 
@@ -99,8 +124,8 @@ export async function getProducts(): Promise<TrendyolProduct[]> {
   while (page < totalPages) {
     const query = new URLSearchParams({
       page:     String(page),
-      size:     "100",  // ürünlerde max 100
-      approved: "true", // sadece onaylı ürünleri çek
+      size:     "100",    // ürünlerde max 100
+      approval: "Approved", // sadece onaylı ürünleri çek
     })
 
     const res = await fetch(
@@ -112,10 +137,15 @@ export async function getProducts(): Promise<TrendyolProduct[]> {
       throw new Error(`Ürünler çekilemedi: ${res.status} ${res.statusText}`)
     }
 
-    const data: TrendyolPage<TrendyolProduct> = await res.json()
-    allProducts.push(...data.content)
+    const raw: unknown = await res.json()
+    if (!raw || typeof raw !== "object") {
+      console.warn("[trendyol] Ürünler: null/boş yanıt, sayfa", page)
+      break
+    }
+    const data = raw as TrendyolPage<TrendyolProduct>
+    allProducts.push(...(data.content ?? []))
 
-    totalPages = data.totalPages
+    totalPages = data.totalPages ?? 0
     page++
   }
 
@@ -157,10 +187,15 @@ export async function getClaims(params: GetClaimsParams): Promise<TrendyolClaim[
       throw new Error(`İadeler çekilemedi: ${res.status} ${res.statusText}`)
     }
 
-    const data: TrendyolPage<TrendyolClaim> = await res.json()
-    allClaims.push(...data.content)
+    const raw: unknown = await res.json()
+    if (!raw || typeof raw !== "object") {
+      console.warn("[trendyol] İadeler: null/boş yanıt, sayfa", page)
+      break
+    }
+    const data = raw as TrendyolPage<TrendyolClaim>
+    allClaims.push(...(data.content ?? []))
 
-    totalPages = data.totalPages
+    totalPages = data.totalPages ?? 0
     page++
   }
 

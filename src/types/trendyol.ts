@@ -15,24 +15,30 @@ export type TrendyolPage<T> = {
 // ─── Siparişler ───────────────────────────────────────────────────────────────
 
 // Sipariş içindeki her bir ürün kalemi
+// Alan adları Trendyol seller API v2 dokümantasyonuna göre güncellendi.
 export type TrendyolOrderLine = {
-  quantity: number        // kaç adet
-  productName: string     // ürün adı
-  barcode: string         // barkod (ürünle eşleştirmek için kullanıyoruz)
-  merchantSku: string     // satıcı SKU'su
-  salePrice: number       // birim satış fiyatı
-  discount: number        // indirim tutarı
-  commission: number      // komisyon tutarı
-  cargoPrice: number      // kargo payı
-  grossAmount: number     // brüt tutar (salePrice * quantity)
+  quantity:      number
+  productName?:  string
+  barcode?:      string
+  merchantSku?:  string
+  price?:        number   // birim satış fiyatı (KDV dahil)
+  amount?:       number   // toplam tutar (price × quantity - discount)
+  discount?:     number   // indirim tutarı
+  commission?:   number   // Trendyol komisyonu
+  cargoPrice?:   number   // kargo payı
+  vatBaseAmount?: number  // KDV matrahı
+  vatValue?:     number   // KDV tutarı
+  currencyCode?: string
 }
 
 // Trendyol'dan gelen sipariş objesi
 export type TrendyolOrder = {
-  id: string                 // Trendyol'un kendi paket ID'si (trendyolOrderId olarak kaydediyoruz)
+  id: string | number        // Trendyol bazen number gönderiyor — DB'ye String olarak kaydediyoruz
   orderNumber: string        // sipariş numarası (müşteriye gösterilen)
   orderDate: number          // Unix timestamp milisaniye
   status: string             // "Delivered", "Cancelled", "Returned" vs.
+  grossAmount?: number       // sipariş toplam brüt tutarı (sipariş seviyesinde)
+  totalDiscount?: number     // toplam indirim
   lines: TrendyolOrderLine[] // siparişteki ürün kalemleri
 }
 
