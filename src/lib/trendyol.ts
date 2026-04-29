@@ -7,6 +7,7 @@ import type {
   TrendyolOrder,
   TrendyolProduct,
   TrendyolClaim,
+  TrendyolSettlement,
 } from "@/types/trendyol"
 
 const BASE_URL = "https://apigw.trendyol.com"
@@ -150,6 +151,62 @@ export async function getProducts(): Promise<TrendyolProduct[]> {
   }
 
   return allProducts
+}
+
+// ─── Settlements (Finance API) ────────────────────────────────────────────────
+
+type GetSettlementsParams = {
+  startDate: number  // Unix ms
+  endDate:   number  // Unix ms — API max 15 günlük aralık kabul eder
+  page?:     number
+  size?:     number  // max 500
+}
+
+// Komisyon, kargo, hizmet bedeli, stopaj ve KDV verilerini çeker.
+// sync.ts bu fonksiyonu 15 günlük chunk'lara bölerek çağırır.
+export async function getSettlements(params: GetSettlementsParams): Promise<TrendyolSettlement[]> {
+  const sellerId = await getSetting("trendyol_seller_id")
+  const headers  = await buildHeaders()
+
+  const allSettlements: TrendyolSettlement[] = []
+  let page       = params.page ?? 0
+  let totalPages = 1
+
+  while (page < totalPages) {
+    const query = new URLSearchParams({
+      startDate: String(params.startDate),
+      endDate:   String(params.endDate),
+      page:      String(page),
+      size:      String(params.size ?? 500),
+    })
+
+    const url = `${BASE_URL}/integration/finance/che/sellers/${sellerId}/settlements?${query}`
+    console.log("[trendyol] GET settlements", url)
+
+    const res = await fetch(url, { headers })
+
+    if (!res.ok) {
+      const body = await res.text()
+      console.error("[trendyol] Settlements hata:", body)
+      throw new Error(`Settlements çekilemedi: ${res.status} ${res.statusText} — ${body}`)
+    }
+
+    const raw: unknown = await res.json()
+    if (!raw || typeof raw !== "object") break
+
+    const data = raw as TrendyolPage<TrendyolSettlement>
+
+    // İlk sayfada ham yapıyı logla — alan adlarını doğrulamak için
+    if (page === 0 && (data.content ?? []).length > 0) {
+      console.log("[trendyol] İlk settlement satırı:", JSON.stringify(data.content[0], null, 2))
+    }
+
+    allSettlements.push(...(data.content ?? []))
+    totalPages = data.totalPages ?? 0
+    page++
+  }
+
+  return allSettlements
 }
 
 // ─── İadeler ──────────────────────────────────────────────────────────────────

@@ -6,9 +6,11 @@ import { NextResponse } from "next/server"
 import { runSync } from "@/lib/sync"
 
 // Sadece POST kabul ediyoruz — sync bir okuma değil, yazma işlemidir
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    const result = await runSync()
+    const body = await req.json().catch(() => ({}))
+    const force = body?.force === true
+    const result = await runSync(force)
 
     if (!result.success) {
       console.error("[sync] Hata:", result.message)

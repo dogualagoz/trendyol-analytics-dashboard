@@ -17,6 +17,32 @@ function calcTrend(current: number, previous: number): number {
   return Math.round(((current - previous) / previous) * 1000) / 10
 }
 
+// Bir sipariş için net kar hesaplar.
+// Öncelik: order-level finansal alanlar (settlements'tan dolar).
+// Komisyon/kargo henüz gelmemişse (=0) sadece bilinen kesintileri çıkar.
+function calcOrderProfit(order: {
+  grossAmount:      unknown
+  discountAmount:   unknown
+  commissionAmount: unknown
+  cargoAmount:      unknown
+  serviceFee:       unknown
+  stoppageAmount:   unknown
+  netKdv:           unknown
+  items: Array<{ quantity: number; product?: { costPrice?: unknown } | null }>
+}): number {
+  const revenue    = toNumber(order.grossAmount) - toNumber(order.discountAmount)
+  const deductions = toNumber(order.commissionAmount)
+                   + toNumber(order.cargoAmount)
+                   + toNumber(order.serviceFee)
+                   + toNumber(order.stoppageAmount)
+                   + toNumber(order.netKdv)
+  const costTotal  = order.items.reduce((s, i) => {
+    const cost = i.product?.costPrice ? toNumber(i.product.costPrice) : 0
+    return s + cost * i.quantity
+  }, 0)
+  return Math.round((revenue - deductions - costTotal) * 100) / 100
+}
+
 // ─── Özet Metrikler ───────────────────────────────────────────────────────────
 
 export type SummaryMetrics = {
@@ -56,13 +82,13 @@ export async function getSummaryMetrics(
 
   // Seçili dönem hesaplamaları
   const totalRevenue = orders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
-  const netProfit    = orders.flatMap(o => o.items).reduce((s, i) => s + toNumber(i.profit), 0)
+  const netProfit    = orders.reduce((s, o) => s + calcOrderProfit(o), 0)
   const orderCount   = orders.length
   const ratio        = profitToSalesRatio(netProfit, totalRevenue)
 
   // Önceki dönem hesaplamaları
   const prevRevenue    = prevOrders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
-  const prevProfit     = prevOrders.flatMap(o => o.items).reduce((s, i) => s + toNumber(i.profit), 0)
+  const prevProfit     = prevOrders.reduce((s, o) => s + calcOrderProfit(o), 0)
   const prevOrderCount = prevOrders.length
   const prevRatio      = profitToSalesRatio(prevProfit, prevRevenue)
 
@@ -96,22 +122,20 @@ export async function getProfitPerformance(
 ): Promise<ProfitPerformancePoint[]> {
   const orders = await db.order.findMany({
     where: { orderDate: { gte: startDate, lte: endDate } },
-    include: { items: true },
+    include: { items: { include: { product: true } } },
     orderBy: { orderDate: "asc" },
   })
 
-  // Siparişleri gün gün grupla
   const grouped = new Map<string, { revenue: number; profit: number }>()
 
   for (const order of orders) {
-    // "1 Nis", "15 May" formatında Türkçe tarih etiketi
     const label = order.orderDate.toLocaleDateString("tr-TR", {
       day:   "numeric",
       month: "short",
     })
 
     const existing = grouped.get(label) ?? { revenue: 0, profit: 0 }
-    const profit   = order.items.reduce((s, i) => s + toNumber(i.profit), 0)
+    const profit   = calcOrderProfit(order)
 
     grouped.set(label, {
       revenue: existing.revenue + toNumber(order.grossAmount),

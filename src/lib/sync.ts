@@ -3,7 +3,7 @@
 
 import db from "@/lib/db"
 import { getSetting, setSetting } from "@/lib/settings"
-import { getOrders, getProducts, getClaims } from "@/lib/trendyol"
+import { getOrders, getProducts, getClaims, getSettlements } from "@/lib/trendyol"
 import { calculateProfitFromLine } from "@/lib/calculations"
 
 // ─── Ürün Sync ────────────────────────────────────────────────────────────────
@@ -45,6 +45,14 @@ async function syncProducts(): Promise<number> {
 // Daha uzun aralıklar için isteği parçalara böleriz.
 const MAX_RANGE_MS = 14 * 24 * 60 * 60 * 1000
 
+// ── Sync Logger ───────────────────────────────────────────────────────────────
+// console.log yerine yapılandırılmış JSON loglar — grep'lemeyi kolaylaştırır.
+// Formatı: [sync:<olay>] { ...alanlar }
+
+function logSync(event: string, data: Record<string, unknown>) {
+  console.log(`[sync:${event}]`, JSON.stringify(data))
+}
+
 // Belirli tarih aralığındaki siparişleri çekip DB'ye yazar.
 // Her sipariş kalemi için kar hesaplayıp saklar.
 async function syncOrders(startDate: number, endDate: number): Promise<number> {
@@ -59,15 +67,59 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
   }
   const orders = allOrders
 
+  // Sync özeti için sayaçlar
+  let totalGrossAmount   = 0
+  let totalProfit        = 0
+  let zeroGrossCount     = 0
+  let zeroCommissionCount = 0
+
+  // İlk siparişi detaylı logla — alan adlarını doğrulamak için
+  if (orders[0]) {
+    const first     = orders[0]
+    const firstLine = first.lines?.[0]
+    logSync("ilk-siparis-ham", {
+      id:           first.id,
+      status:       first.status,
+      grossAmount_api:   first.grossAmount,           // Trendyol'dan gelen
+      totalDiscount_api: first.totalDiscount,
+      lineCount:    first.lines?.length ?? 0,
+    })
+    if (firstLine) {
+      logSync("ilk-kalem-ham", {
+        barcode:    firstLine.barcode,
+        qty:        firstLine.quantity,
+        price:      firstLine.price,        // birim fiyat mı, toplam mı? — bunu doğrula
+        amount:     firstLine.amount,       // price×qty mi? — bunu doğrula
+        discount:   firstLine.discount,
+        commission: firstLine.commission,   // 0 geliyorsa settlements API gerekebilir
+        cargoPrice: firstLine.cargoPrice,   // 0 geliyorsa order API'da yok demektir
+      })
+    }
+  }
+
   for (const order of orders) {
     // Trendyol bazen ID'yi number olarak gönderiyor — DB String bekliyor
     const trendyolOrderId = String(order.id)
 
-    // Sipariş seviyesi tutarları hesapla
-    const grossAmount      = Number(order.grossAmount) || order.lines.reduce((sum, l) => sum + (Number(l.amount) || 0), 0)
-    const discountAmount   = Number(order.totalDiscount) || order.lines.reduce((sum, l) => sum + (Number(l.discount) || 0), 0)
-    const commissionAmount = order.lines.reduce((sum, l) => sum + (Number(l.commission) || 0), 0)
-    const cargoAmount      = order.lines.reduce((sum, l) => sum + (Number(l.cargoPrice) || 0), 0)
+    // grossAmount hesabı: 3 fallback katmanlı
+    // 1. order.grossAmount (API'da varsa)
+    // 2. sum(lines[].amount) — toplam kalem tutarı
+    // 3. sum(lines[].price × qty) — birim fiyat × adet (en güvenilir fallback)
+    const grossFromAPI    = Number(order.grossAmount) || 0
+    const grossFromAmount = order.lines.reduce((s, l) => s + (Number(l.amount) || 0), 0)
+    const grossFromPrice  = order.lines.reduce((s, l) => s + (Number(l.price) || 0) * (Number(l.quantity) || 1), 0)
+    const grossAmount     = grossFromAPI || grossFromAmount || grossFromPrice
+
+    if (grossAmount === 0) {
+      zeroGrossCount++
+      logSync("uyari-sifir-gross", { trendyolOrderId, grossFromAPI, grossFromAmount, grossFromPrice })
+    }
+
+    const discountAmount   = Number(order.totalDiscount) || order.lines.reduce((s, l) => s + (Number(l.discount) || 0), 0)
+    const commissionAmount = order.lines.reduce((s, l) => s + (Number(l.commission) || 0), 0)
+    const cargoAmount      = order.lines.reduce((s, l) => s + (Number(l.cargoPrice) || 0), 0)
+
+    if (commissionAmount === 0) zeroCommissionCount++
 
     // Siparişi kaydet veya güncelle — update'te tutarlar da yenilenir (yanlış alan adıyla kaydedilmiş eski kayıtları düzeltir)
     const savedOrder = await db.order.upsert({
@@ -90,6 +142,8 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
       },
     })
 
+    let orderProfit = 0
+
     // Her sipariş kalemi için
     for (const line of order.lines) {
       // Barkodla ürünü bul — maliyet fiyatını almak için
@@ -101,18 +155,17 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
 
       // Kar hesapla
       const profit = calculateProfitFromLine(line, costPrice)
+      orderProfit += profit
 
       // Kalem DB'de var mı kontrol et
       const existingItem = await db.orderItem.findFirst({
         where: {
           orderId:  savedOrder.id,
-          // Aynı siparişte aynı barkodlu ürün = aynı kalem
           product: { barcode: line.barcode ?? undefined },
         },
       })
 
       if (existingItem) {
-        // Varsa güncelle — salePrice ve profit dahil tüm tutarları yenile
         await db.orderItem.update({
           where: { id: existingItem.id },
           data: {
@@ -124,7 +177,6 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
           },
         })
       } else {
-        // Yoksa oluştur — Number() || 0: Trendyol undefined/null gönderirse 0 yaz
         await db.orderItem.create({
           data: {
             orderId:    savedOrder.id,
@@ -139,15 +191,106 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
         })
       }
     }
+
+    totalGrossAmount += grossAmount
+    totalProfit      += orderProfit
   }
+
+  // Sync tamamlandı — özet log
+  logSync("ozet", {
+    toplamSiparis:    orders.length,
+    toplamGross:      Math.round(totalGrossAmount * 100) / 100,
+    toplamProfit:     Math.round(totalProfit * 100) / 100,
+    sıfırGrossSayısı: zeroGrossCount,
+    sıfırKomisyonSayısı: zeroCommissionCount,
+    uyarı: zeroCommissionCount > 0
+      ? "Komisyon değerleri 0 — Trendyol Orders API komisyon döndürmüyor olabilir. Bkz: trendyol_api.md#bilinen-eksikler"
+      : null,
+  })
 
   return orders.length
 }
 
+// ─── Settlement Sync ──────────────────────────────────────────────────────────
+
+// Trendyol Finance API'sından komisyon, kargo, hizmet bedeli, stopaj, KDV verilerini çeker.
+// Her sipariş için bu alanları DB'ye yazar — doğru kar hesabı için gerekli.
+async function syncSettlements(startDate: number, endDate: number): Promise<number> {
+  const MAX_RANGE_MS = 15 * 24 * 60 * 60 * 1000  // Settlements API max 15 gün
+  const allSettlements = []
+
+  let chunkStart = startDate
+  while (chunkStart < endDate) {
+    const chunkEnd = Math.min(chunkStart + MAX_RANGE_MS, endDate)
+    const chunk = await getSettlements({ startDate: chunkStart, endDate: chunkEnd })
+    allSettlements.push(...chunk)
+    chunkStart = chunkEnd + 1
+  }
+
+  if (allSettlements.length === 0) return 0
+
+  // shipmentPackageId bazında grupla — bir paket için birden fazla satır olabilir
+  const grouped = new Map<string, {
+    commissionAmount: number
+    cargoAmount:      number
+    serviceFee:       number
+    stoppageAmount:   number
+    netKdv:           number
+  }>()
+
+  for (const s of allSettlements) {
+    const key = String(s.shipmentPackageId ?? s.orderNumber ?? "")
+    if (!key) continue
+
+    const existing = grouped.get(key) ?? {
+      commissionAmount: 0,
+      cargoAmount:      0,
+      serviceFee:       0,
+      stoppageAmount:   0,
+      netKdv:           0,
+    }
+
+    // Her alan için ilgili settlement satırını topla
+    existing.commissionAmount += Number(s.commissionAmount) || 0
+    existing.cargoAmount      += Number(s.cargoAmount)      || 0
+    existing.serviceFee       += Number(s.serviceFee)       || 0
+    existing.stoppageAmount   += Number(s.stoppageAmount)   || 0
+    existing.netKdv           += Number(s.netKdv)           || 0
+
+    grouped.set(key, existing)
+  }
+
+  let updatedCount = 0
+
+  for (const [packageId, amounts] of Array.from(grouped.entries())) {
+    const order = await db.order.findUnique({ where: { trendyolOrderId: packageId } })
+    if (!order) continue
+
+    // Tüm finansal alanları güncelle — sadece gerçek değer varsa yaz
+    await db.order.update({
+      where: { id: order.id },
+      data: {
+        ...(amounts.commissionAmount !== 0 && { commissionAmount: amounts.commissionAmount }),
+        ...(amounts.cargoAmount      !== 0 && { cargoAmount:      amounts.cargoAmount }),
+        ...(amounts.serviceFee       !== 0 && { serviceFee:       amounts.serviceFee }),
+        ...(amounts.stoppageAmount   !== 0 && { stoppageAmount:   amounts.stoppageAmount }),
+        ...(amounts.netKdv           !== 0 && { netKdv:           amounts.netKdv }),
+      },
+    })
+    updatedCount++
+  }
+
+  logSync("settlements-ozet", {
+    toplamSettlement: allSettlements.length,
+    gruplanmisPackage: grouped.size,
+    guncellenenSiparis: updatedCount,
+  })
+
+  return allSettlements.length
+}
+
 // ─── İade Sync ────────────────────────────────────────────────────────────────
 
-// İadeleri şimdilik sadece SyncLog'a sayı olarak yansıtıyoruz.
-// İadeler sayfası için ham veri DB'de ayrı tutulmayacak — her görüntülemede API'dan çekilecek.
 async function syncClaims(startDate: number, endDate: number): Promise<number> {
   const claims = await getClaims({ startDate, endDate })
   return claims.length
@@ -155,26 +298,31 @@ async function syncClaims(startDate: number, endDate: number): Promise<number> {
 
 // ─── Ana Sync Fonksiyonu ──────────────────────────────────────────────────────
 
-// Dışarıdan çağrılan tek fonksiyon budur.
-// 1. Son sync tarihini okur
-// 2. Ürünleri sync'ler
-// 3. Siparişleri sync'ler
-// 4. Son sync tarihini günceller
-// 5. Sync log kaydı oluşturur
-export async function runSync(): Promise<{ success: boolean; message: string }> {
+// force=true → last_sync_date'i görmezden gelir, 90 gün geriye gider (mevcut veriyi düzeltmek için)
+export async function runSync(force = false): Promise<{ success: boolean; message: string }> {
   try {
-    // İlk sync'te 90 gün geriye git (Trendyol'un izin verdiği max)
     const lastSyncStr = await getSetting("last_sync_date")
-    const startDate   = lastSyncStr
-      ? Number(lastSyncStr)
-      : Date.now() - 90 * 24 * 60 * 60 * 1000
+    const startDate   = (force || !lastSyncStr)
+      ? Date.now() - 90 * 24 * 60 * 60 * 1000
+      : Number(lastSyncStr)
     const endDate = Date.now()
+
+    if (force) logSync("force-resync", { startDate: new Date(startDate).toISOString() })
 
     // Ürünleri sync'le
     const productCount = await syncProducts()
 
-    // Siparişleri sync'le
+    // Siparişleri sync'le (grossAmount 3-katmanlı fallback ile)
     const orderCount = await syncOrders(startDate, endDate)
+
+    // Settlements: komisyon, kargo, hizmet, stopaj, KDV
+    let settlementCount = 0
+    try {
+      settlementCount = await syncSettlements(startDate, endDate)
+    } catch (err) {
+      // Settlements API erişilemezse sync durmasın — sadece logla
+      logSync("settlements-hata", { error: String(err) })
+    }
 
     // İadeleri sync'le
     const claimCount = await syncClaims(startDate, endDate)
@@ -192,7 +340,7 @@ export async function runSync(): Promise<{ success: boolean; message: string }> 
 
     return {
       success: true,
-      message: `${productCount} ürün, ${orderCount} sipariş, ${claimCount} iade sync'lendi.`,
+      message: `${productCount} ürün, ${orderCount} sipariş, ${settlementCount} settlement, ${claimCount} iade sync'lendi.`,
     }
   } catch (error) {
     // Hata olursa log'a yaz, uygulamayı çökertme

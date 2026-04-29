@@ -57,6 +57,30 @@ export type TrendyolProduct = {
   approvalStatus: string // "Approved", "Rejected", "Waiting"
 }
 
+// ─── Settlements (Finance API) ────────────────────────────────────────────────
+
+// GET /integration/finance/che/sellers/{sellerId}/settlements
+// Her sipariş paketi için finansal kalemleri döner.
+// Bir paket için birden fazla satır gelebilir (satış + komisyon kesintisi ayrı satırlar olabilir).
+export type TrendyolSettlement = {
+  id?:                string | number
+  transactionDate?:   number           // Unix ms
+  orderNumber?:       string           // sipariş numarası (müşteriye gösterilen)
+  shipmentPackageId?: number           // paket ID — orders.trendyolOrderId ile eşleşir
+  transactionType?:   string           // "Sale", "Return", "CommissionNegative" vs.
+  barcode?:           string
+  commissionAmount?:  number           // Trendyol komisyonu (negatif veya pozitif gelebilir)
+  cargoAmount?:       number           // kargo ücreti
+  serviceFee?:        number           // hizmet bedeli
+  stoppageAmount?:    number           // stopaj kesintisi
+  netKdv?:            number           // net KDV
+  sellerRevenue?:     number           // satıcı hakediş (tüm kesintiler sonrası)
+  debt?:              number           // borç tutarı
+  credit?:            number           // alacak tutarı
+  paymentOrderId?:    string
+  paymentDate?:       number
+}
+
 // ─── İadeler ──────────────────────────────────────────────────────────────────
 
 // İade içindeki ürün kalemi
