@@ -208,10 +208,11 @@ GET /integration/order/sellers/{sellerId}/claims
 ## 4. Settlements (Finance API) — Komisyon, Kargo, Hizmet, Stopaj, KDV
 
 ```
-GET /integration/finance/che/sellers/{sellerId}/settlements
+GET /integration/finance/sellers/{sellerId}/settlements
 ```
 
 > Bu endpoint olmadan kar hesabı yapılamaz. Orders API komisyon/kargo döndürmez.
+> ⚠️ Eski dokümanda `/che/` path segmenti vardı — **yanlış**, kullanma.
 
 **Query parametreleri:**
 
@@ -274,6 +275,14 @@ GET /integration/finance/che/sellers/{sellerId}/settlements
 | `orderNumber`         | Sipariş no (müşteri görür)                 | matching fallback             |
 
 > ⚠️ **Gerçek alan adları henüz doğrulanmadı.** İlk sync'te konsola `[trendyol] İlk settlement satırı: {...}` logu çıkacak. O logu görünce alan adlarını buraya güncelle.
+
+**556 "Service Unavailable" hatası (test sırasında alındı):**
+Olası nedenler:
+1. Seller hesabında Finance API yetkisi kapalı — Trendyol panelinden veya destek hattından etkinleştirmek gerekebilir
+2. Bu endpoint bazı satıcı paketlerinde mevcut değil (premium özellik olabilir)
+3. URL hâlâ yanlış olabilir — doğru URL bulununca buraya güncelle
+
+Sync bu hatayı yakalayıp devam ediyor. Settlements çalışana kadar komisyon = 0 olarak hesaplanır.
 
 **Negatif değer uyarısı:**
 

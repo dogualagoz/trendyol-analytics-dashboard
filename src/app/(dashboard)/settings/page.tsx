@@ -1,9 +1,7 @@
 "use client"
 
-// Kullanıcı etkileşimi (onChange, onSubmit) olduğu için Client Component
-
 import { useState, useEffect } from "react"
-import { Save, Eye, EyeOff, CheckCircle, AlertCircle } from "lucide-react"
+import { Save, Eye, EyeOff, CheckCircle, AlertCircle, RefreshCw, RotateCcw } from "lucide-react"
 
 // Form alanlarının tipleri
 type SettingsForm = {
@@ -25,8 +23,9 @@ export default function SettingsPage() {
   const [showSecret, setShowSecret] = useState(false)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
-  // null: henüz işlem yok | "success" | "error"
   const [status, setStatus] = useState<"success" | "error" | null>(null)
+  const [syncing, setSyncing] = useState(false)
+  const [syncResult, setSyncResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   // Sayfa açılınca mevcut ayarları çek ve formu doldur
   useEffect(() => {
@@ -51,6 +50,24 @@ export default function SettingsPage() {
   function handleChange(e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) {
     setForm((prev) => ({ ...prev, [e.target.name]: e.target.value }))
     setStatus(null)
+  }
+
+  async function handleSync(force: boolean) {
+    setSyncing(true)
+    setSyncResult(null)
+    try {
+      const res = await fetch("/api/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ force }),
+      })
+      const data = await res.json()
+      setSyncResult({ ok: res.ok, message: data.message })
+    } catch {
+      setSyncResult({ ok: false, message: "Bağlantı hatası." })
+    } finally {
+      setSyncing(false)
+    }
   }
 
   // Formu kaydet
@@ -201,6 +218,51 @@ export default function SettingsPage() {
           </button>
         </div>
       </form>
+
+      {/* Veri Yönetimi Kartı */}
+      <div className="bg-white rounded-xl border border-[#E2E2E2] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 space-y-4">
+        <div>
+          <h3 className="text-sm font-semibold text-[#1a1c1c]">Veri Yönetimi</h3>
+          <p className="text-xs text-[#574236] mt-0.5">
+            Son sync'ten bu yana gelen yeni siparişleri çek veya tüm veriyi baştan yükle.
+          </p>
+        </div>
+
+        <div className="flex flex-col sm:flex-row gap-3">
+          {/* Normal sync */}
+          <button
+            onClick={() => handleSync(false)}
+            disabled={syncing}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-[#E2E2E2] text-sm font-medium text-[#574236] hover:border-[#F27A1A] hover:text-[#F27A1A] transition-colors disabled:opacity-50"
+          >
+            <RefreshCw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} />
+            Yeni Verileri Çek
+          </button>
+
+          {/* Force sync */}
+          <button
+            onClick={() => handleSync(true)}
+            disabled={syncing}
+            className="flex items-center justify-center gap-2 px-4 py-2 rounded-lg border border-amber-200 bg-amber-50 text-sm font-medium text-amber-700 hover:bg-amber-100 transition-colors disabled:opacity-50"
+          >
+            <RotateCcw className={`w-4 h-4 ${syncing ? "animate-spin" : ""}`} />
+            Tüm Veriyi Yeniden Çek (Son 90 Gün)
+          </button>
+        </div>
+
+        {syncResult && (
+          <div className={`flex items-start gap-2 text-sm rounded-lg px-3 py-2 ${
+            syncResult.ok
+              ? "text-emerald-600 bg-emerald-50"
+              : "text-red-500 bg-red-50"
+          }`}>
+            {syncResult.ok
+              ? <CheckCircle className="w-4 h-4 shrink-0 mt-0.5" />
+              : <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />}
+            {syncResult.message}
+          </div>
+        )}
+      </div>
 
     </div>
   )

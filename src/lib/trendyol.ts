@@ -180,7 +180,7 @@ export async function getSettlements(params: GetSettlementsParams): Promise<Tren
       size:      String(params.size ?? 500),
     })
 
-    const url = `${BASE_URL}/integration/finance/che/sellers/${sellerId}/settlements?${query}`
+    const url = `${BASE_URL}/integration/finance/sellers/${sellerId}/settlements?${query}`
     console.log("[trendyol] GET settlements", url)
 
     const res = await fetch(url, { headers })
