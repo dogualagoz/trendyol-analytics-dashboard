@@ -2,7 +2,16 @@ import { NextResponse } from "next/server"
 import { getSetting, setSetting } from "@/lib/settings"
 
 // Yönettiğimiz ayar anahtarları — sadece bu key'ler okunur/yazılır
-const KEYS = ["trendyol_api_key", "trendyol_api_secret", "trendyol_seller_id", "sync_interval"] as const
+const KEYS = [
+  "trendyol_api_key",
+  "trendyol_api_secret",
+  "trendyol_seller_id",
+  "trendyol_integration_ref",
+  "sync_interval",
+  "cargo_tier_1",
+  "cargo_tier_2",
+  "cargo_tier_3",
+] as const
 
 // GET /api/settings — mevcut ayarları döner, sayfa açılınca formu doldurmak için kullanılır
 export async function GET() {

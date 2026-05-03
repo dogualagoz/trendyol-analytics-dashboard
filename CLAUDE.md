@@ -100,6 +100,7 @@ src/
 │   ├── db.ts                    # Prisma client singleton
 │   ├── auth.ts                  # NextAuth config
 │   ├── utils.ts                 # Genel yardımcılar (cn, para formatı vs.)
+│   ├── constants.ts             # Tüm hesaplamsal sabitler (KDV, stopaj, API limitleri vs.)
 │   ├── settings.ts              # Ayar okuma/yazma (getSetting, setSetting)
 │   ├── trendyol.ts              # Trendyol API client
 │   ├── calculations.ts          # Kar hesaplama formülleri
@@ -275,6 +276,7 @@ Pasif:  text-[#574236] pl-4
 - Türkçe arayüz, İngilizce kod (değişken/fonksiyon/klasör isimleri İngilizce)
 - Responsive tasarım (mobil uyumlu)
 - shadcn bileşenlerini `components/ui/` dışında değiştirme
+- Hesaplamalarda sihirli sayı kullanma — KDV, stopaj, API limitleri gibi tüm sabitler `lib/constants.ts`'de tanımlanır ve oradan import edilir
 
 ### Geliştirme Döngüsü (Olgun Aşama)
 

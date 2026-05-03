@@ -3,6 +3,7 @@
 // Sync sırasında her sipariş kalemi için çağrılır, sonuç DB'ye kaydedilir.
 
 import type { TrendyolOrderLine } from "@/types/trendyol"
+import { CARGO_KDV_RATE, CARGO_TIER_2_MIN, CARGO_TIER_3_MIN } from "@/lib/constants"
 
 // ─── Kalem Karı ───────────────────────────────────────────────────────────────
 
@@ -78,6 +79,25 @@ export function calculateProfitFromLine(
     costPrice,
     extraCost:  overrides?.extraCost  ?? 0,
   })
+}
+
+// ─── Kargo Barem Hesaplama ────────────────────────────────────────────────────
+
+// Siparişin brüt tutarına göre hangi kargo bareminin uygulanacağını bulur,
+// KDV ekler ve nihai kargo maliyetini döner.
+// tier1/2/3: kullanıcının ayarlardan girdiği KDV hariç barem fiyatları (TL)
+export function calculateCargoWithKdv(
+  orderGrossAmount: number,
+  tier1: number,
+  tier2: number,
+  tier3: number
+): number {
+  if (!tier1 && !tier2 && !tier3) return 0
+  const base =
+    orderGrossAmount < CARGO_TIER_2_MIN ? tier1 :
+    orderGrossAmount < CARGO_TIER_3_MIN ? tier2 :
+    tier3
+  return Math.round(base * (1 + CARGO_KDV_RATE) * 100) / 100
 }
 
 // ─── Oran Hesaplamaları ───────────────────────────────────────────────────────

@@ -4,7 +4,14 @@
 import db from "@/lib/db"
 import { getSetting, setSetting } from "@/lib/settings"
 import { getOrders, getProducts, getClaims, getSettlements } from "@/lib/trendyol"
-import { calculateProfitFromLine } from "@/lib/calculations"
+import { calculateProfitFromLine, calculateCargoWithKdv } from "@/lib/calculations"
+import {
+  ORDER_MAX_RANGE_MS,
+  SETTLEMENT_MAX_RANGE_MS,
+  KDV_RATE,
+  STOPAJ_RATE,
+  DEFAULT_SYNC_LOOKBACK_DAYS,
+} from "@/lib/constants"
 
 // ─── Ürün Sync ────────────────────────────────────────────────────────────────
 
@@ -41,9 +48,6 @@ async function syncProducts(): Promise<number> {
 
 // ─── Sipariş Sync ─────────────────────────────────────────────────────────────
 
-// Trendyol max 14 günlük tarih aralığı kabul ediyor.
-// Daha uzun aralıklar için isteği parçalara böleriz.
-const MAX_RANGE_MS = 14 * 24 * 60 * 60 * 1000
 
 // ── Sync Logger ───────────────────────────────────────────────────────────────
 // console.log yerine yapılandırılmış JSON loglar — grep'lemeyi kolaylaştırır.
@@ -60,12 +64,17 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
   const allOrders = []
   let chunkStart = startDate
   while (chunkStart < endDate) {
-    const chunkEnd = Math.min(chunkStart + MAX_RANGE_MS, endDate)
+    const chunkEnd = Math.min(chunkStart + ORDER_MAX_RANGE_MS, endDate)
     const chunk = await getOrders({ startDate: chunkStart, endDate: chunkEnd })
     allOrders.push(...chunk)
     chunkStart = chunkEnd + 1
   }
   const orders = allOrders
+
+  // Kargo barem fiyatları (kullanıcı ayarlardan girer, KDV hariç)
+  const cargoTier1 = Number(await getSetting("cargo_tier_1")) || 0
+  const cargoTier2 = Number(await getSetting("cargo_tier_2")) || 0
+  const cargoTier3 = Number(await getSetting("cargo_tier_3")) || 0
 
   // Sync özeti için sayaçlar
   let totalGrossAmount   = 0
@@ -123,12 +132,12 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
       const rate     = Number(l.commission) || 0
       return s + netPrice * qty * rate / 100
     }, 0)
-    const cargoAmount    = order.lines.reduce((s, l) => s + (Number(l.cargoPrice) || 0), 0)
+    // Kargo: Orders API'dan gelmez → barem tablosundan hesapla (kullanıcı ayarlarından)
+    const cargoFromApi   = order.lines.reduce((s, l) => s + (Number(l.cargoPrice) || 0), 0)
+    const cargoAmount    = cargoFromApi || calculateCargoWithKdv(grossAmount, cargoTier1, cargoTier2, cargoTier3)
     const netRevenue     = grossAmount - discountAmount
-    // KDV %10 sabit: komisyon üzerinden hesaplanır (Trendyol'un kestiği hizmet KDV'si)
-    const estimatedKdv      = Math.round(commissionAmount * 0.10 * 100) / 100
-    // Stopaj %1 sabit: net ciro üzerinden hesaplanır
-    const estimatedStoppage = Math.round(netRevenue * 0.01 * 100) / 100
+    const estimatedKdv      = Math.round(commissionAmount * KDV_RATE    * 100) / 100
+    const estimatedStoppage = Math.round(netRevenue      * STOPAJ_RATE * 100) / 100
 
     if (commissionAmount === 0) zeroCommissionCount++
 
@@ -231,12 +240,11 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
 // Trendyol Finance API'sından komisyon, kargo, hizmet bedeli, stopaj, KDV verilerini çeker.
 // Her sipariş için bu alanları DB'ye yazar — doğru kar hesabı için gerekli.
 async function syncSettlements(startDate: number, endDate: number): Promise<number> {
-  const MAX_RANGE_MS = 15 * 24 * 60 * 60 * 1000  // Settlements API max 15 gün
   const allSettlements = []
 
   let chunkStart = startDate
   while (chunkStart < endDate) {
-    const chunkEnd = Math.min(chunkStart + MAX_RANGE_MS, endDate)
+    const chunkEnd = Math.min(chunkStart + SETTLEMENT_MAX_RANGE_MS, endDate)
     const chunk = await getSettlements({ startDate: chunkStart, endDate: chunkEnd })
     allSettlements.push(...chunk)
     chunkStart = chunkEnd + 1
@@ -318,7 +326,7 @@ export async function runSync(force = false): Promise<{ success: boolean; messag
   try {
     const lastSyncStr = await getSetting("last_sync_date")
     const startDate   = (force || !lastSyncStr)
-      ? Date.now() - 90 * 24 * 60 * 60 * 1000
+      ? Date.now() - DEFAULT_SYNC_LOOKBACK_DAYS * 24 * 60 * 60 * 1000
       : Number(lastSyncStr)
     const endDate = Date.now()
 

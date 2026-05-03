@@ -20,6 +20,7 @@ async function buildHeaders(): Promise<HeadersInit> {
   const apiKey    = await getSetting("trendyol_api_key")
   const apiSecret = await getSetting("trendyol_api_secret")
   const sellerId  = await getSetting("trendyol_seller_id")
+  const integRef  = await getSetting("trendyol_integration_ref")
 
   if (!apiKey || !apiSecret || !sellerId) {
     throw new Error("Trendyol API bilgileri eksik. Ayarlar sayfasından girin.")
@@ -28,9 +29,14 @@ async function buildHeaders(): Promise<HeadersInit> {
   // Basic Auth: "apiKey:apiSecret" stringini base64'e çeviriyoruz
   const token = Buffer.from(`${apiKey}:${apiSecret}`).toString("base64")
 
+  // User-Agent: Trendyol entegrasyon referans kodu varsa onu kullan, yoksa SelfIntegration
+  const userAgent = integRef
+    ? `${sellerId} - ${integRef}`
+    : `${sellerId} - SelfIntegration`
+
   return {
     "Authorization": `Basic ${token}`,
-    "User-Agent":    `${sellerId} - SelfIntegration`,
+    "User-Agent":    userAgent,
     "Content-Type":  "application/json",
   }
 }
@@ -180,7 +186,7 @@ export async function getSettlements(params: GetSettlementsParams): Promise<Tren
       size:      String(params.size ?? 500),
     })
 
-    const url = `${BASE_URL}/integration/finance/che/sellers/${sellerId}/settlements?${query}`
+    const url = `${BASE_URL}/integration/finance/sellers/${sellerId}/settlements?${query}`
     console.log("[trendyol] GET settlements", url)
 
     const res = await fetch(url, { headers })
