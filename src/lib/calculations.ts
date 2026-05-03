@@ -61,11 +61,16 @@ export function calculateProfitFromLine(
   costPrice: number,
   overrides?: { serviceFee?: number; stoppage?: number; netKdv?: number; extraCost?: number }
 ): number {
+  const netPrice = Number(line.price)    || 0
+  const qty      = Number(line.quantity) || 1
+  // commission API'dan oran (%) olarak geliyor → tutara çevir
+  const commissionAmt = netPrice * qty * (Number(line.commission) || 0) / 100
+
   return calculateProfit({
-    salePrice:  Number(line.price)      || 0,
-    quantity:   Number(line.quantity)   || 1,
+    salePrice:  netPrice,
+    quantity:   qty,
     discount:   Number(line.discount)   || 0,
-    commission: Number(line.commission) || 0,
+    commission: commissionAmt,
     cargoShare: Number(line.cargoPrice) || 0,
     serviceFee: overrides?.serviceFee ?? 0,
     stoppage:   overrides?.stoppage   ?? 0,

@@ -24,9 +24,10 @@ export type TrendyolOrderLine = {
   price?:        number   // birim satış fiyatı (KDV dahil)
   amount?:       number   // toplam tutar (price × quantity - discount)
   discount?:     number   // indirim tutarı
-  commission?:   number   // Trendyol komisyonu
+  commission?:   number   // Trendyol komisyon ORANI (%) — örn. 21 → %21; tutar = price × qty × rate/100
   cargoPrice?:   number   // kargo payı
-  vatBaseAmount?: number  // KDV matrahı
+  vatBaseAmount?: number  // KDV matrahı oranı (%)
+  vatRate?:      number   // KDV oranı (%) — örn. 10 → %10
   vatValue?:     number   // KDV tutarı
   currencyCode?: string
 }

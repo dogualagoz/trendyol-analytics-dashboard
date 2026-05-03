@@ -116,8 +116,19 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
     }
 
     const discountAmount   = Number(order.totalDiscount) || order.lines.reduce((s, l) => s + (Number(l.discount) || 0), 0)
-    const commissionAmount = order.lines.reduce((s, l) => s + (Number(l.commission) || 0), 0)
-    const cargoAmount      = order.lines.reduce((s, l) => s + (Number(l.cargoPrice) || 0), 0)
+    // commission API'dan oran (%) olarak geliyor — tutara çeviriyoruz: netFiyat × oran/100
+    const commissionAmount = order.lines.reduce((s, l) => {
+      const netPrice = Number(l.price)    || 0
+      const qty      = Number(l.quantity) || 1
+      const rate     = Number(l.commission) || 0
+      return s + netPrice * qty * rate / 100
+    }, 0)
+    const cargoAmount    = order.lines.reduce((s, l) => s + (Number(l.cargoPrice) || 0), 0)
+    const netRevenue     = grossAmount - discountAmount
+    // KDV %10 sabit: komisyon üzerinden hesaplanır (Trendyol'un kestiği hizmet KDV'si)
+    const estimatedKdv      = Math.round(commissionAmount * 0.10 * 100) / 100
+    // Stopaj %1 sabit: net ciro üzerinden hesaplanır
+    const estimatedStoppage = Math.round(netRevenue * 0.01 * 100) / 100
 
     if (commissionAmount === 0) zeroCommissionCount++
 
@@ -130,6 +141,8 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
         discountAmount,
         commissionAmount,
         cargoAmount,
+        netKdv:         estimatedKdv,
+        stoppageAmount: estimatedStoppage,
       },
       create: {
         trendyolOrderId,
@@ -139,6 +152,8 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
         discountAmount,
         commissionAmount,
         cargoAmount,
+        netKdv:         estimatedKdv,
+        stoppageAmount: estimatedStoppage,
       },
     })
 

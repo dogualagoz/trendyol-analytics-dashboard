@@ -1,26 +1,20 @@
-// Dashboard ana sayfası için DB sorguları.
-// Mock verideki her yapıyla birebir eşleşir — page.tsx'de sadece import değişecek.
-
 import db from "@/lib/db"
 import { profitToSalesRatio } from "@/lib/calculations"
 
-// ─── Yardımcı ─────────────────────────────────────────────────────────────────
+// ─── Yardımcılar ──────────────────────────────────────────────────────────────
 
-// Prisma Decimal tipini number'a çevirir
 function toNumber(val: unknown): number {
   return val ? Number(val) : 0
 }
 
-// İki dönem arasındaki değişim yüzdesi — trend hesabı için
 function calcTrend(current: number, previous: number): number {
   if (previous === 0) return 0
   return Math.round(((current - previous) / previous) * 1000) / 10
 }
 
-// Bir sipariş için net kar hesaplar.
-// Öncelik: order-level finansal alanlar (settlements'tan dolar).
-// Komisyon/kargo henüz gelmemişse (=0) sadece bilinen kesintileri çıkar.
-function calcOrderProfit(order: {
+function r(v: number) { return Math.round(v * 100) / 100 }
+
+type OrderWithItems = {
   grossAmount:      unknown
   discountAmount:   unknown
   commissionAmount: unknown
@@ -29,79 +23,95 @@ function calcOrderProfit(order: {
   stoppageAmount:   unknown
   netKdv:           unknown
   items: Array<{ quantity: number; product?: { costPrice?: unknown } | null }>
-}): number {
+}
+
+function calcOrderProfit(order: OrderWithItems): number {
   const revenue    = toNumber(order.grossAmount) - toNumber(order.discountAmount)
-  const deductions = toNumber(order.commissionAmount)
+  const commission = toNumber(order.commissionAmount)
+  const stoppage   = toNumber(order.stoppageAmount) || r(revenue * 0.01)
+  const kdv        = toNumber(order.netKdv)         || r(commission * 0.10)
+  const deductions = commission
                    + toNumber(order.cargoAmount)
                    + toNumber(order.serviceFee)
-                   + toNumber(order.stoppageAmount)
-                   + toNumber(order.netKdv)
+                   + stoppage
+                   + kdv
   const costTotal  = order.items.reduce((s, i) => {
     const cost = i.product?.costPrice ? toNumber(i.product.costPrice) : 0
     return s + cost * i.quantity
   }, 0)
-  return Math.round((revenue - deductions - costTotal) * 100) / 100
+  return r(revenue - deductions - costTotal)
 }
 
 // ─── Özet Metrikler ───────────────────────────────────────────────────────────
 
 export type SummaryMetrics = {
-  totalRevenue:       number
-  netProfit:          number
-  orderCount:         number
-  profitToSalesRatio: number
+  totalRevenue:              number
+  revenueWithCost:           number  // maliyeti girilmiş ürünlerin cirosu
+  netProfit:                 number
+  orderCount:                number
+  profitToSalesRatio:        number
+  profitToProductCostRatio:  number  // kâr / toplam ürün maliyeti
   trends: {
-    totalRevenue:       number
-    netProfit:          number
-    orderCount:         number
-    profitToSalesRatio: number
+    totalRevenue:             number
+    revenueWithCost:          number
+    netProfit:                number
+    orderCount:               number
+    profitToSalesRatio:       number
+    profitToProductCostRatio: number
   }
 }
 
-// Toplam ciro, kar, sipariş sayısı ve trend bilgilerini döner.
-// Trend: seçili dönem ile bir önceki aynı uzunluktaki dönem karşılaştırılır.
-export async function getSummaryMetrics(
-  startDate: Date,
-  endDate: Date
-): Promise<SummaryMetrics> {
-  // Seçili dönem için siparişleri çek
-  const orders = await db.order.findMany({
-    where: { orderDate: { gte: startDate, lte: endDate } },
-    include: { items: true },
-  })
+export async function getSummaryMetrics(startDate: Date, endDate: Date): Promise<SummaryMetrics> {
+  const includeOpts = { items: { include: { product: true } } } as const
 
-  // Bir önceki dönem (aynı uzunlukta, hemen öncesi)
-  const periodMs   = endDate.getTime() - startDate.getTime()
-  const prevEnd    = new Date(startDate.getTime() - 1)
-  const prevStart  = new Date(prevEnd.getTime() - periodMs)
+  const [orders, prevOrders] = await Promise.all([
+    db.order.findMany({ where: { orderDate: { gte: startDate, lte: endDate } }, include: includeOpts }),
+    (() => {
+      const periodMs = endDate.getTime() - startDate.getTime()
+      const prevEnd  = new Date(startDate.getTime() - 1)
+      const prevStart = new Date(prevEnd.getTime() - periodMs)
+      return db.order.findMany({ where: { orderDate: { gte: prevStart, lte: prevEnd } }, include: includeOpts })
+    })(),
+  ])
 
-  const prevOrders = await db.order.findMany({
-    where: { orderDate: { gte: prevStart, lte: prevEnd } },
-    include: { items: true },
-  })
+  function calc(os: typeof orders) {
+    const totalRevenue = os.reduce((s, o) => s + toNumber(o.grossAmount), 0)
+    const netProfit    = os.reduce((s, o) => s + calcOrderProfit(o), 0)
+    const orderCount   = os.length
 
-  // Seçili dönem hesaplamaları
-  const totalRevenue = orders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
-  const netProfit    = orders.reduce((s, o) => s + calcOrderProfit(o), 0)
-  const orderCount   = orders.length
-  const ratio        = profitToSalesRatio(netProfit, totalRevenue)
+    const revenueWithCost = os
+      .filter(o => o.items.some(i => i.product?.costPrice != null && Number(i.product!.costPrice) > 0))
+      .reduce((s, o) => s + toNumber(o.grossAmount), 0)
 
-  // Önceki dönem hesaplamaları
-  const prevRevenue    = prevOrders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
-  const prevProfit     = prevOrders.reduce((s, o) => s + calcOrderProfit(o), 0)
-  const prevOrderCount = prevOrders.length
-  const prevRatio      = profitToSalesRatio(prevProfit, prevRevenue)
+    const totalProductCost = os.reduce((s, o) =>
+      s + o.items.reduce((si, i) => {
+        const cost = i.product?.costPrice ? toNumber(i.product.costPrice) : 0
+        return si + cost * i.quantity
+      }, 0)
+    , 0)
+
+    return {
+      totalRevenue,
+      revenueWithCost,
+      netProfit,
+      orderCount,
+      profitToSalesRatio:       profitToSalesRatio(netProfit, totalRevenue),
+      profitToProductCostRatio: totalProductCost > 0 ? r((netProfit / totalProductCost) * 100) : 0,
+    }
+  }
+
+  const cur  = calc(orders)
+  const prev = calc(prevOrders)
 
   return {
-    totalRevenue,
-    netProfit,
-    orderCount,
-    profitToSalesRatio: ratio,
+    ...cur,
     trends: {
-      totalRevenue:       calcTrend(totalRevenue, prevRevenue),
-      netProfit:          calcTrend(netProfit,    prevProfit),
-      orderCount:         calcTrend(orderCount,   prevOrderCount),
-      profitToSalesRatio: calcTrend(ratio,        prevRatio),
+      totalRevenue:             calcTrend(cur.totalRevenue,             prev.totalRevenue),
+      revenueWithCost:          calcTrend(cur.revenueWithCost,          prev.revenueWithCost),
+      netProfit:                calcTrend(cur.netProfit,                prev.netProfit),
+      orderCount:               calcTrend(cur.orderCount,               prev.orderCount),
+      profitToSalesRatio:       calcTrend(cur.profitToSalesRatio,       prev.profitToSalesRatio),
+      profitToProductCostRatio: calcTrend(cur.profitToProductCostRatio, prev.profitToProductCostRatio),
     },
   }
 }
@@ -109,19 +119,14 @@ export async function getSummaryMetrics(
 // ─── Kar Performansı Grafiği ──────────────────────────────────────────────────
 
 export type ProfitPerformancePoint = {
-  date:    string  // "1 Nis", "15 May" gibi
+  date:    string
   revenue: number
   profit:  number
 }
 
-// Tarih aralığını günlere bölerek her gün için ciro ve kar toplar.
-// Recharts çizgi grafiğine direkt verilebilir.
-export async function getProfitPerformance(
-  startDate: Date,
-  endDate: Date
-): Promise<ProfitPerformancePoint[]> {
+export async function getProfitPerformance(startDate: Date, endDate: Date): Promise<ProfitPerformancePoint[]> {
   const orders = await db.order.findMany({
-    where: { orderDate: { gte: startDate, lte: endDate } },
+    where:   { orderDate: { gte: startDate, lte: endDate } },
     include: { items: { include: { product: true } } },
     orderBy: { orderDate: "asc" },
   })
@@ -129,24 +134,15 @@ export async function getProfitPerformance(
   const grouped = new Map<string, { revenue: number; profit: number }>()
 
   for (const order of orders) {
-    const label = order.orderDate.toLocaleDateString("tr-TR", {
-      day:   "numeric",
-      month: "short",
-    })
-
+    const label    = order.orderDate.toLocaleDateString("tr-TR", { day: "numeric", month: "short" })
     const existing = grouped.get(label) ?? { revenue: 0, profit: 0 }
-    const profit   = calcOrderProfit(order)
-
     grouped.set(label, {
       revenue: existing.revenue + toNumber(order.grossAmount),
-      profit:  existing.profit  + profit,
+      profit:  existing.profit  + calcOrderProfit(order),
     })
   }
 
-  return Array.from(grouped.entries()).map(([date, vals]) => ({
-    date,
-    ...vals,
-  }))
+  return Array.from(grouped.entries()).map(([date, vals]) => ({ date, ...vals }))
 }
 
 // ─── Maliyet Dağılımı ─────────────────────────────────────────────────────────
@@ -157,51 +153,146 @@ export type CostDistributionItem = {
   color: string
 }
 
-// Maliyet türlerini toplayıp donut grafik için hazırlar.
-export async function getCostDistribution(
-  startDate: Date,
-  endDate: Date
-): Promise<CostDistributionItem[]> {
+export async function getCostDistribution(startDate: Date, endDate: Date): Promise<CostDistributionItem[]> {
   const orders = await db.order.findMany({
-    where: { orderDate: { gte: startDate, lte: endDate } },
+    where:   { orderDate: { gte: startDate, lte: endDate } },
     include: { items: { include: { product: true } } },
   })
 
-  let productCost = 0
-  let commission  = 0
-  let cargo       = 0
-  let serviceFee  = 0
-  let stoppage    = 0
-  let kdv         = 0
-  let extra       = 0
+  let productCost = 0, commission = 0, cargo = 0, serviceFee = 0, stoppage = 0, kdv = 0, extra = 0
 
   for (const order of orders) {
-    commission += toNumber(order.commissionAmount)
+    const grossRev   = toNumber(order.grossAmount)
+    const discount   = toNumber(order.discountAmount)
+    const netRev     = grossRev - discount
+
+    // Komisyon: DB'de doğru hesaplanmış değer varsa kullan, yoksa 0 (sync sonrası dolar)
+    const commissionVal = toNumber(order.commissionAmount)
+    commission += commissionVal
+
     cargo      += toNumber(order.cargoAmount)
     serviceFee += toNumber(order.serviceFee)
-    stoppage   += toNumber(order.stoppageAmount)
-    kdv        += toNumber(order.netKdv)
     extra      += toNumber(order.extraCost)
 
-    // Ürün maliyeti: her kalemin costPrice × quantity toplamı
+    // Stopaj ve KDV: DB'de değer varsa kullan; yoksa sabit oranlarla hesapla
+    // Stopaj %1 sabit (net ciro üzerinden), KDV %10 sabit (komisyon üzerinden)
+    stoppage += toNumber(order.stoppageAmount) || r(netRev * 0.01)
+    kdv      += toNumber(order.netKdv)         || r(commissionVal * 0.10)
+
     for (const item of order.items) {
       const cost = item.product?.costPrice ? toNumber(item.product.costPrice) : 0
       productCost += cost * item.quantity
     }
   }
 
-  // Değeri 0 olan kategorileri grafikten çıkar
-  const all: CostDistributionItem[] = [
-    { name: "Ürün Maliyeti", value: productCost, color: "#F27A1A" },
-    { name: "Komisyon",      value: commission,  color: "#00D1FF" },
-    { name: "Kargo",         value: cargo,       color: "#7C3AED" },
-    { name: "Hizmet Bedeli", value: serviceFee,  color: "#FF7F5D" },
-    { name: "Stopaj",        value: stoppage,    color: "#1E293B" },
-    { name: "KDV",           value: kdv,         color: "#10B981" },
-    { name: "Ekstra",        value: extra,       color: "#F59E0B" },
+  // Tüm kategoriler döndürülür — sıfır olanlar chart'ta soluk gösterilir (veri bekleniyor).
+  // Ürün Maliyeti: kullanıcı ürünler sayfasından girer.
+  // Diğerleri: settlements sync sonrası dolar.
+  return [
+    { name: "Toplam Ürün Maliyeti", value: r(productCost), color: "#F27A1A" },
+    { name: "Toplam Komisyon",      value: r(commission),  color: "#00D1FF" },
+    { name: "Toplam Kargo Ücreti",  value: r(cargo),       color: "#7C3AED" },
+    { name: "Toplam Hizmet Bedeli", value: r(serviceFee),  color: "#FF7F5D" },
+    { name: "Toplam Stopaj",        value: r(stoppage),    color: "#1E293B" },
+    { name: "Toplam Net KDV",       value: r(kdv),         color: "#10B981" },
+    { name: "Ekstra Maliyet",       value: r(extra),       color: "#F59E0B" },
   ]
+}
 
-  return all.filter(item => item.value > 0)
+// ─── Ürün Metrikleri ─────────────────────────────────────────────────────────
+
+export type ProductMetrics = {
+  netUnitsSold:      number
+  avgRevenuePerUnit: number
+  avgProfitPerUnit:  number
+  avgCargoPerUnit:   number
+  avgCommissionRate: number
+  avgDiscountRate:   number
+}
+
+export async function getProductMetrics(startDate: Date, endDate: Date): Promise<ProductMetrics> {
+  const orders = await db.order.findMany({
+    where:   { orderDate: { gte: startDate, lte: endDate } },
+    include: { items: { include: { product: true } } },
+  })
+
+  const netUnitsSold    = orders.reduce((s, o) => s + o.items.reduce((si, i) => si + i.quantity, 0), 0)
+  const totalRevenue    = orders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
+  const totalProfit     = orders.reduce((s, o) => s + calcOrderProfit(o), 0)
+  const totalCargo      = orders.reduce((s, o) => s + toNumber(o.cargoAmount), 0)
+  const totalCommission = orders.reduce((s, o) => s + toNumber(o.commissionAmount), 0)
+  const totalDiscount   = orders.reduce((s, o) => s + toNumber(o.discountAmount), 0)
+
+  return {
+    netUnitsSold,
+    avgRevenuePerUnit: netUnitsSold > 0 ? r(totalRevenue    / netUnitsSold) : 0,
+    avgProfitPerUnit:  netUnitsSold > 0 ? r(totalProfit     / netUnitsSold) : 0,
+    avgCargoPerUnit:   netUnitsSold > 0 ? r(totalCargo      / netUnitsSold) : 0,
+    avgCommissionRate: totalRevenue > 0 ? r((totalCommission / totalRevenue) * 100) : 0,
+    avgDiscountRate:   totalRevenue > 0 ? r((totalDiscount   / totalRevenue) * 100) : 0,
+  }
+}
+
+// ─── Sipariş Metrikleri ──────────────────────────────────────────────────────
+
+export type OrderMetrics = {
+  orderCount:          number
+  avgRevenuePerOrder:  number
+  avgProfitPerOrder:   number
+  avgCargoPerOrder:    number
+}
+
+export async function getOrderMetrics(startDate: Date, endDate: Date): Promise<OrderMetrics> {
+  const orders = await db.order.findMany({
+    where:   { orderDate: { gte: startDate, lte: endDate } },
+    include: { items: { include: { product: true } } },
+  })
+
+  const orderCount   = orders.length
+  const totalRevenue = orders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
+  const totalProfit  = orders.reduce((s, o) => s + calcOrderProfit(o), 0)
+  const totalCargo   = orders.reduce((s, o) => s + toNumber(o.cargoAmount), 0)
+
+  return {
+    orderCount,
+    avgRevenuePerOrder: orderCount > 0 ? r(totalRevenue / orderCount) : 0,
+    avgProfitPerOrder:  orderCount > 0 ? r(totalProfit  / orderCount) : 0,
+    avgCargoPerOrder:   orderCount > 0 ? r(totalCargo   / orderCount) : 0,
+  }
+}
+
+// ─── Net Kâr Funnel ───────────────────────────────────────────────────────────
+
+export type FunnelStep = {
+  label: string
+  value: number
+}
+
+export async function getProfitFunnel(startDate: Date, endDate: Date): Promise<FunnelStep[]> {
+  const orders = await db.order.findMany({
+    where:   { orderDate: { gte: startDate, lte: endDate } },
+    include: { items: { include: { product: true } } },
+  })
+
+  const ciro       = orders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
+  const cargo      = orders.reduce((s, o) => s + toNumber(o.cargoAmount), 0)
+  const commission = orders.reduce((s, o) => s + toNumber(o.commissionAmount), 0)
+  const serviceFee = orders.reduce((s, o) => s + toNumber(o.serviceFee), 0)
+  const stoppage   = orders.reduce((s, o) => s + toNumber(o.stoppageAmount), 0)
+  const kdv        = orders.reduce((s, o) => s + toNumber(o.netKdv), 0)
+  const profit     = orders.reduce((s, o) => s + calcOrderProfit(o), 0)
+
+  const afterCargo       = ciro - cargo
+  const afterMarketplace = afterCargo - commission - serviceFee
+  const afterTax         = afterMarketplace - stoppage - kdv
+
+  return [
+    { label: "Ciro",                             value: r(ciro) },
+    { label: "Kargo ücreti düşülmüş tutar",      value: r(afterCargo) },
+    { label: "Pazaryeri masrafı düşülmüş tutar", value: r(afterMarketplace) },
+    { label: "Vergi düşülmüş tutar",             value: r(afterTax) },
+    { label: "Kâr",                              value: r(profit) },
+  ]
 }
 
 // ─── En İyi Ürünler ───────────────────────────────────────────────────────────
@@ -214,27 +305,19 @@ export type TopProduct = {
   revenue:   number
 }
 
-// En çok satış yapan ürünleri döner — tablo için.
-export async function getTopProducts(
-  startDate: Date,
-  endDate:   Date,
-  limit = 5
-): Promise<TopProduct[]> {
-  // Sipariş kalemleri üzerinden ürün bazlı toplama yapıyoruz
+export async function getTopProducts(startDate: Date, endDate: Date, limit = 5): Promise<TopProduct[]> {
   const items = await db.orderItem.findMany({
     where: {
-      order: { orderDate: { gte: startDate, lte: endDate } },
+      order:   { orderDate: { gte: startDate, lte: endDate } },
       product: { isNot: null },
     },
     include: { product: true },
   })
 
-  // Ürün ID'sine göre grupla
   const grouped = new Map<string, TopProduct>()
 
   for (const item of items) {
     if (!item.product) continue
-
     const existing = grouped.get(item.product.id)
     if (existing) {
       existing.unitsSold += item.quantity
@@ -250,7 +333,6 @@ export async function getTopProducts(
     }
   }
 
-  // Gelire göre sırala, ilk limit kadarını döndür
   return Array.from(grouped.values())
     .sort((a, b) => b.revenue - a.revenue)
     .slice(0, limit)
