@@ -1,5 +1,6 @@
 import db from "@/lib/db"
-import { profitToSalesRatio } from "@/lib/calculations"
+import { profitToSalesRatio, calculateCargoWithKdv } from "@/lib/calculations"
+import { getSetting } from "@/lib/settings"
 
 // ─── Yardımcılar ──────────────────────────────────────────────────────────────
 
@@ -25,13 +26,23 @@ type OrderWithItems = {
   items: Array<{ quantity: number; product?: { costPrice?: unknown } | null }>
 }
 
-function calcOrderProfit(order: OrderWithItems): number {
+async function loadCargoTiers(): Promise<[number, number, number]> {
+  const [t1, t2, t3] = await Promise.all([
+    getSetting("cargo_tier_1"),
+    getSetting("cargo_tier_2"),
+    getSetting("cargo_tier_3"),
+  ])
+  return [Number(t1) || 0, Number(t2) || 0, Number(t3) || 0]
+}
+
+function calcOrderProfit(order: OrderWithItems, cargoFallback = 0): number {
   const revenue    = toNumber(order.grossAmount) - toNumber(order.discountAmount)
   const commission = toNumber(order.commissionAmount)
   const stoppage   = toNumber(order.stoppageAmount) || r(revenue * 0.01)
   const kdv        = toNumber(order.netKdv)         || r(commission * 0.10)
+  const cargo      = toNumber(order.cargoAmount)    || cargoFallback
   const deductions = commission
-                   + toNumber(order.cargoAmount)
+                   + cargo
                    + toNumber(order.serviceFee)
                    + stoppage
                    + kdv
@@ -64,7 +75,7 @@ export type SummaryMetrics = {
 export async function getSummaryMetrics(startDate: Date, endDate: Date): Promise<SummaryMetrics> {
   const includeOpts = { items: { include: { product: true } } } as const
 
-  const [orders, prevOrders] = await Promise.all([
+  const [orders, prevOrders, cargoTiers] = await Promise.all([
     db.order.findMany({ where: { orderDate: { gte: startDate, lte: endDate } }, include: includeOpts }),
     (() => {
       const periodMs = endDate.getTime() - startDate.getTime()
@@ -72,11 +83,17 @@ export async function getSummaryMetrics(startDate: Date, endDate: Date): Promise
       const prevStart = new Date(prevEnd.getTime() - periodMs)
       return db.order.findMany({ where: { orderDate: { gte: prevStart, lte: prevEnd } }, include: includeOpts })
     })(),
+    loadCargoTiers(),
   ])
+
+  const [ct1, ct2, ct3] = cargoTiers
 
   function calc(os: typeof orders) {
     const totalRevenue = os.reduce((s, o) => s + toNumber(o.grossAmount), 0)
-    const netProfit    = os.reduce((s, o) => s + calcOrderProfit(o), 0)
+    const netProfit    = os.reduce((s, o) => {
+      const cargoFallback = calculateCargoWithKdv(toNumber(o.grossAmount), ct1, ct2, ct3)
+      return s + calcOrderProfit(o, cargoFallback)
+    }, 0)
     const orderCount   = os.length
 
     const revenueWithCost = os
@@ -125,20 +142,24 @@ export type ProfitPerformancePoint = {
 }
 
 export async function getProfitPerformance(startDate: Date, endDate: Date): Promise<ProfitPerformancePoint[]> {
-  const orders = await db.order.findMany({
-    where:   { orderDate: { gte: startDate, lte: endDate } },
-    include: { items: { include: { product: true } } },
-    orderBy: { orderDate: "asc" },
-  })
+  const [orders, [ct1, ct2, ct3]] = await Promise.all([
+    db.order.findMany({
+      where:   { orderDate: { gte: startDate, lte: endDate } },
+      include: { items: { include: { product: true } } },
+      orderBy: { orderDate: "asc" },
+    }),
+    loadCargoTiers(),
+  ])
 
   const grouped = new Map<string, { revenue: number; profit: number }>()
 
   for (const order of orders) {
-    const label    = order.orderDate.toLocaleDateString("tr-TR", { day: "numeric", month: "short" })
-    const existing = grouped.get(label) ?? { revenue: 0, profit: 0 }
+    const label         = order.orderDate.toLocaleDateString("tr-TR", { day: "numeric", month: "short" })
+    const cargoFallback = calculateCargoWithKdv(toNumber(order.grossAmount), ct1, ct2, ct3)
+    const existing      = grouped.get(label) ?? { revenue: 0, profit: 0 }
     grouped.set(label, {
       revenue: existing.revenue + toNumber(order.grossAmount),
-      profit:  existing.profit  + calcOrderProfit(order),
+      profit:  existing.profit  + calcOrderProfit(order, cargoFallback),
     })
   }
 
@@ -154,10 +175,19 @@ export type CostDistributionItem = {
 }
 
 export async function getCostDistribution(startDate: Date, endDate: Date): Promise<CostDistributionItem[]> {
-  const orders = await db.order.findMany({
-    where:   { orderDate: { gte: startDate, lte: endDate } },
-    include: { items: { include: { product: true } } },
-  })
+  const [orders, tier1Str, tier2Str, tier3Str] = await Promise.all([
+    db.order.findMany({
+      where:   { orderDate: { gte: startDate, lte: endDate } },
+      include: { items: { include: { product: true } } },
+    }),
+    getSetting("cargo_tier_1"),
+    getSetting("cargo_tier_2"),
+    getSetting("cargo_tier_3"),
+  ])
+
+  const cargoTier1 = Number(tier1Str) || 0
+  const cargoTier2 = Number(tier2Str) || 0
+  const cargoTier3 = Number(tier3Str) || 0
 
   let productCost = 0, commission = 0, cargo = 0, serviceFee = 0, stoppage = 0, kdv = 0, extra = 0
 
@@ -170,7 +200,9 @@ export async function getCostDistribution(startDate: Date, endDate: Date): Promi
     const commissionVal = toNumber(order.commissionAmount)
     commission += commissionVal
 
-    cargo      += toNumber(order.cargoAmount)
+    // Kargo: DB'de değer varsa kullan; yoksa barem tablosundan hesapla (KDV dahil)
+    const cargoFallback = calculateCargoWithKdv(grossRev, cargoTier1, cargoTier2, cargoTier3)
+    cargo      += toNumber(order.cargoAmount) || cargoFallback
     serviceFee += toNumber(order.serviceFee)
     extra      += toNumber(order.extraCost)
 
@@ -211,15 +243,24 @@ export type ProductMetrics = {
 }
 
 export async function getProductMetrics(startDate: Date, endDate: Date): Promise<ProductMetrics> {
-  const orders = await db.order.findMany({
-    where:   { orderDate: { gte: startDate, lte: endDate } },
-    include: { items: { include: { product: true } } },
-  })
+  const [orders, [ct1, ct2, ct3]] = await Promise.all([
+    db.order.findMany({
+      where:   { orderDate: { gte: startDate, lte: endDate } },
+      include: { items: { include: { product: true } } },
+    }),
+    loadCargoTiers(),
+  ])
 
   const netUnitsSold    = orders.reduce((s, o) => s + o.items.reduce((si, i) => si + i.quantity, 0), 0)
   const totalRevenue    = orders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
-  const totalProfit     = orders.reduce((s, o) => s + calcOrderProfit(o), 0)
-  const totalCargo      = orders.reduce((s, o) => s + toNumber(o.cargoAmount), 0)
+  const totalProfit     = orders.reduce((s, o) => {
+    const cargoFallback = calculateCargoWithKdv(toNumber(o.grossAmount), ct1, ct2, ct3)
+    return s + calcOrderProfit(o, cargoFallback)
+  }, 0)
+  const totalCargo      = orders.reduce((s, o) => {
+    const fallback = calculateCargoWithKdv(toNumber(o.grossAmount), ct1, ct2, ct3)
+    return s + (toNumber(o.cargoAmount) || fallback)
+  }, 0)
   const totalCommission = orders.reduce((s, o) => s + toNumber(o.commissionAmount), 0)
   const totalDiscount   = orders.reduce((s, o) => s + toNumber(o.discountAmount), 0)
 
@@ -243,15 +284,24 @@ export type OrderMetrics = {
 }
 
 export async function getOrderMetrics(startDate: Date, endDate: Date): Promise<OrderMetrics> {
-  const orders = await db.order.findMany({
-    where:   { orderDate: { gte: startDate, lte: endDate } },
-    include: { items: { include: { product: true } } },
-  })
+  const [orders, [ct1, ct2, ct3]] = await Promise.all([
+    db.order.findMany({
+      where:   { orderDate: { gte: startDate, lte: endDate } },
+      include: { items: { include: { product: true } } },
+    }),
+    loadCargoTiers(),
+  ])
 
   const orderCount   = orders.length
   const totalRevenue = orders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
-  const totalProfit  = orders.reduce((s, o) => s + calcOrderProfit(o), 0)
-  const totalCargo   = orders.reduce((s, o) => s + toNumber(o.cargoAmount), 0)
+  const totalProfit  = orders.reduce((s, o) => {
+    const cargoFallback = calculateCargoWithKdv(toNumber(o.grossAmount), ct1, ct2, ct3)
+    return s + calcOrderProfit(o, cargoFallback)
+  }, 0)
+  const totalCargo   = orders.reduce((s, o) => {
+    const fallback = calculateCargoWithKdv(toNumber(o.grossAmount), ct1, ct2, ct3)
+    return s + (toNumber(o.cargoAmount) || fallback)
+  }, 0)
 
   return {
     orderCount,
@@ -269,18 +319,27 @@ export type FunnelStep = {
 }
 
 export async function getProfitFunnel(startDate: Date, endDate: Date): Promise<FunnelStep[]> {
-  const orders = await db.order.findMany({
-    where:   { orderDate: { gte: startDate, lte: endDate } },
-    include: { items: { include: { product: true } } },
-  })
+  const [orders, [ct1, ct2, ct3]] = await Promise.all([
+    db.order.findMany({
+      where:   { orderDate: { gte: startDate, lte: endDate } },
+      include: { items: { include: { product: true } } },
+    }),
+    loadCargoTiers(),
+  ])
 
   const ciro       = orders.reduce((s, o) => s + toNumber(o.grossAmount), 0)
-  const cargo      = orders.reduce((s, o) => s + toNumber(o.cargoAmount), 0)
+  const cargo      = orders.reduce((s, o) => {
+    const fallback = calculateCargoWithKdv(toNumber(o.grossAmount), ct1, ct2, ct3)
+    return s + (toNumber(o.cargoAmount) || fallback)
+  }, 0)
   const commission = orders.reduce((s, o) => s + toNumber(o.commissionAmount), 0)
   const serviceFee = orders.reduce((s, o) => s + toNumber(o.serviceFee), 0)
   const stoppage   = orders.reduce((s, o) => s + toNumber(o.stoppageAmount), 0)
   const kdv        = orders.reduce((s, o) => s + toNumber(o.netKdv), 0)
-  const profit     = orders.reduce((s, o) => s + calcOrderProfit(o), 0)
+  const profit     = orders.reduce((s, o) => {
+    const cargoFallback = calculateCargoWithKdv(toNumber(o.grossAmount), ct1, ct2, ct3)
+    return s + calcOrderProfit(o, cargoFallback)
+  }, 0)
 
   const afterCargo       = ciro - cargo
   const afterMarketplace = afterCargo - commission - serviceFee
