@@ -8,18 +8,28 @@ datasource db {
 }
 
 model Product {
-  id         String      @id @default(cuid())
-  trendyolId String      @unique
-  title      String
-  barcode    String?
-  imageUrl   String?
-  // Satıcının girdiği maliyet — Trendyol API'dan gelmez, kullanıcı elle girer
-  costPrice  Decimal?
-  category   String?
-  brand      String?
-  createdAt  DateTime    @default(now())
-  updatedAt  DateTime    @updatedAt
-  orderItems OrderItem[]
+  id           String      @id @default(cuid())
+  trendyolId   String      @unique
+  title        String
+  barcode      String?
+  imageUrl     String?
+  // Satıcının girdiği alanlar — Trendyol API'dan gelmez
+  costPrice    Decimal?
+  costKdvRate  Decimal     @default(10)
+  desi         Decimal     @default(1)
+  extraCost    Decimal     @default(0)
+  // Trendyol API'dan gelen ürün detayları
+  category     String?
+  brand        String?
+  modelCode    String?
+  color        String?
+  size         String?
+  stockQty     Int         @default(0)
+  deliveryType String?
+  returnRate   Decimal?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+  orderItems   OrderItem[]
 }
 
 model Order {

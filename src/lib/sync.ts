@@ -20,26 +20,58 @@ import {
 async function syncProducts(): Promise<number> {
   const products = await getProducts()
 
+  const nullBarcode = products.filter(p => !p.barcode).length
+  if (nullBarcode > 0) logSync("urun-barkod-eksik", { toplam: products.length, barkodSiz: nullBarcode })
+
+  // İlk ürünün ham yapısını logla — alan adlarını doğrulamak için
+  if (products[0]) {
+    const p = products[0] as unknown as Record<string, unknown>
+    logSync("ilk-urun-ham", {
+      id: p.id, barcode: p.barcode, title: p.title,
+      brand: p.brand, brandName: p.brandName,
+      category: p.category, categoryName: p.categoryName,
+      imageUrl: p.imageUrl, images: p.images,
+      quantity: p.quantity, stockCode: p.stockCode,
+      productMainId: p.productMainId,
+    })
+  }
+
   for (const product of products) {
+    const attrs = product.attributes ?? []
+    const color = attrs.find(a =>
+      /renk|color/i.test(a.attributeName)
+    )?.attributeValue ?? null
+    const size = attrs.find(a =>
+      /beden|numara|size/i.test(a.attributeName)
+    )?.attributeValue ?? null
+    const modelCode = product.productMainId ?? product.stockCode ?? null
+    const desi      = product.dimensionalWeight ?? undefined
+    // Products API deliveryOption obje döndürebilir — deliveryType sipariş enrichment'tan gelir
+    const deliveryType = typeof product.deliveryOption === "string" ? product.deliveryOption : null
+
+    const imageUrl = product.images?.[0]?.url ?? product.imageUrl ?? null
+    const category = product.categoryName ?? product.category ?? null
+    const brand    = product.brandName    ?? product.brand    ?? null
+
+    const common = {
+      title:    product.title,
+      barcode:  product.barcode ?? null,
+      imageUrl,
+      category,
+      brand,
+      stockQty: product.quantity,
+      modelCode,
+      color,
+      size,
+      deliveryType,
+      ...(desi !== undefined && { desi }),
+    }
+
     await db.product.upsert({
-      where: { trendyolId: product.id },
-      update: {
-        title:    product.title,
-        barcode:  product.barcode,
-        imageUrl: product.imageUrl,
-        category: product.category,
-        brand:    product.brand,
-        // costPrice güncellenmez — kullanıcının elle girdiği değeri koruyoruz
-      },
-      create: {
-        trendyolId: product.id,
-        title:      product.title,
-        barcode:    product.barcode,
-        imageUrl:   product.imageUrl,
-        category:   product.category,
-        brand:      product.brand,
-        // costPrice null olarak başlar, kullanıcı ürünler sayfasından girer
-      },
+      where:  { trendyolId: product.id },
+      update: common,
+      // costPrice güncellenmez — kullanıcının elle girdiği değeri koruyoruz
+      create: { trendyolId: product.id, ...common },
     })
   }
 
@@ -220,15 +252,95 @@ async function syncOrders(startDate: number, endDate: number): Promise<number> {
     totalProfit      += orderProfit
   }
 
+  // ─── Ürün Zenginleştirme ─────────────────────────────────────────────────────
+  // Siparişlerden gelen renk, beden, model kodu ve teslimat tipi bilgisini
+  // ürün tablosuna toplu yaz. Barkod bazında tekilleştirilir (aynı barkod için
+  // son gelen değer kullanılır).
+
+  type ProductEnrichment = {
+    color?: string
+    size?: string
+    modelCode?: string
+    deliveryType?: string
+    barcode?: string   // barkodsuz ürünler için sipariş satırından doldur
+  }
+  // barkod → enrichment (birincil yol)
+  const byBarcode   = new Map<string, ProductEnrichment>()
+  // trendyolId → enrichment (barkod yoksa contentId üzerinden)
+  const byContentId = new Map<string, ProductEnrichment>()
+  // barkod → {total, cancelled} — iade oranı hesabı için
+  const returnStats = new Map<string, { total: number; cancelled: number }>()
+
+  for (const order of orders) {
+    const deliveryType = order.deliveryType ?? undefined
+    for (const line of order.lines) {
+      const patch: ProductEnrichment = {
+        ...(line.productColor ? { color: line.productColor }    : {}),
+        ...(line.productSize  ? { size: line.productSize }      : {}),
+        ...(line.merchantSku  ? { modelCode: line.merchantSku } : {}),
+        ...(deliveryType      ? { deliveryType }                 : {}),
+      }
+
+      // İade oranı istatistiği
+      if (line.barcode) {
+        const s = returnStats.get(line.barcode) ?? { total: 0, cancelled: 0 }
+        s.total += line.quantity
+        const status = line.orderLineItemStatusName ?? ""
+        if (/cancelled|returned|iade|iptal/i.test(status)) s.cancelled += line.quantity
+        returnStats.set(line.barcode, s)
+      }
+
+      if (line.barcode) {
+        byBarcode.set(line.barcode, { ...(byBarcode.get(line.barcode) ?? {}), ...patch })
+      }
+
+      // contentId ile trendyolId eşleştirmesi — barkodsuz ürünler için
+      const contentId = line.contentId ?? line.productCode
+      if (contentId) {
+        const key = String(contentId)
+        byContentId.set(key, {
+          ...(byContentId.get(key) ?? {}),
+          ...patch,
+          ...(line.barcode ? { barcode: line.barcode } : {}),
+        })
+      }
+    }
+  }
+
+  // Birincil: barkod bazlı güncelleme
+  for (const [barcode, data] of Array.from(byBarcode)) {
+    if (Object.keys(data).length === 0) continue
+    await db.product.updateMany({ where: { barcode }, data })
+  }
+
+  // İkincil: trendyolId (contentId) bazlı güncelleme — özellikle barkodsuz ürünler için
+  for (const [contentId, data] of Array.from(byContentId)) {
+    if (Object.keys(data).length === 0) continue
+    await db.product.updateMany({ where: { trendyolId: contentId }, data })
+  }
+
+  // İade oranı güncelleme
+  for (const [barcode, stats] of Array.from(returnStats)) {
+    if (stats.total === 0) continue
+    const returnRate = Math.round((stats.cancelled / stats.total) * 1000) / 10  // 1 ondalık
+    await db.product.updateMany({ where: { barcode }, data: { returnRate } })
+  }
+
+  logSync("urun-zenginlestirme", {
+    barkodBazli: byBarcode.size,
+    contentIdBazli: byContentId.size,
+    iadeOrani: returnStats.size,
+  })
+
   // Sync tamamlandı — özet log
   logSync("ozet", {
-    toplamSiparis:    orders.length,
-    toplamGross:      Math.round(totalGrossAmount * 100) / 100,
-    toplamProfit:     Math.round(totalProfit * 100) / 100,
-    sıfırGrossSayısı: zeroGrossCount,
+    toplamSiparis:       orders.length,
+    toplamGross:         Math.round(totalGrossAmount * 100) / 100,
+    toplamProfit:        Math.round(totalProfit * 100) / 100,
+    sıfırGrossSayısı:    zeroGrossCount,
     sıfırKomisyonSayısı: zeroCommissionCount,
     uyarı: zeroCommissionCount > 0
-      ? "Komisyon değerleri 0 — Trendyol Orders API komisyon döndürmüyor olabilir. Bkz: trendyol_api.md#bilinen-eksikler"
+      ? "Komisyon değerleri 0 — Trendyol Orders API komisyon döndürmüyor olabilir."
       : null,
   })
 

@@ -1,0 +1,10 @@
+-- AlterTable
+ALTER TABLE "Product" ADD COLUMN     "color" TEXT,
+ADD COLUMN     "costKdvRate" DECIMAL(65,30) NOT NULL DEFAULT 10,
+ADD COLUMN     "deliveryType" TEXT,
+ADD COLUMN     "desi" DECIMAL(65,30) NOT NULL DEFAULT 1,
+ADD COLUMN     "extraCost" DECIMAL(65,30) NOT NULL DEFAULT 0,
+ADD COLUMN     "modelCode" TEXT,
+ADD COLUMN     "returnRate" DECIMAL(65,30),
+ADD COLUMN     "size" TEXT,
+ADD COLUMN     "stockQty" INTEGER NOT NULL DEFAULT 0;

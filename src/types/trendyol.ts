@@ -17,45 +17,69 @@ export type TrendyolPage<T> = {
 // Sipariş içindeki her bir ürün kalemi
 // Alan adları Trendyol seller API v2 dokümantasyonuna göre güncellendi.
 export type TrendyolOrderLine = {
-  quantity:      number
-  productName?:  string
-  barcode?:      string
-  merchantSku?:  string
-  price?:        number   // birim satış fiyatı (KDV dahil)
-  amount?:       number   // toplam tutar (price × quantity - discount)
-  discount?:     number   // indirim tutarı
-  commission?:   number   // Trendyol komisyon ORANI (%) — örn. 21 → %21; tutar = price × qty × rate/100
-  cargoPrice?:   number   // kargo payı
-  vatBaseAmount?: number  // KDV matrahı oranı (%)
-  vatRate?:      number   // KDV oranı (%) — örn. 10 → %10
-  vatValue?:     number   // KDV tutarı
-  currencyCode?: string
+  quantity:       number
+  productName?:   string
+  barcode?:       string
+  merchantSku?:   string   // satıcının kendi SKU'su — products.modelCode olarak kaydedilir
+  stockCode?:     string   // alternatif SKU
+  contentId?:     number   // Trendyol ürün içerik ID — products.trendyolId ile eşleştirilebilir
+  productCode?:   number   // contentId ile aynı
+  price?:         number   // birim satış fiyatı (KDV dahil)
+  amount?:        number   // toplam tutar (price × quantity - discount)
+  discount?:      number   // indirim tutarı
+  commission?:    number   // Trendyol komisyon ORANI (%) — örn. 21 → %21; tutar = price × qty × rate/100
+  cargoPrice?:    number   // kargo payı
+  vatBaseAmount?: number   // KDV matrahı oranı (%)
+  vatRate?:       number   // KDV oranı (%) — örn. 10 → %10
+  vatValue?:      number   // KDV tutarı
+  currencyCode?:  string
+  productColor?:  string   // renk — products.color olarak kaydedilir
+  productSize?:   string   // beden — products.size olarak kaydedilir
+  orderLineItemStatusName?: string  // "Delivered", "Cancelled", "Returned" vs.
 }
 
 // Trendyol'dan gelen sipariş objesi
 export type TrendyolOrder = {
-  id: string | number        // Trendyol bazen number gönderiyor — DB'ye String olarak kaydediyoruz
-  orderNumber: string        // sipariş numarası (müşteriye gösterilen)
-  orderDate: number          // Unix timestamp milisaniye
-  status: string             // "Delivered", "Cancelled", "Returned" vs.
-  grossAmount?: number       // sipariş toplam brüt tutarı (sipariş seviyesinde)
-  totalDiscount?: number     // toplam indirim
-  lines: TrendyolOrderLine[] // siparişteki ürün kalemleri
+  id:             string | number  // Trendyol bazen number gönderiyor — DB'ye String olarak kaydediyoruz
+  orderNumber:    string           // sipariş numarası (müşteriye gösterilen)
+  orderDate:      number           // Unix timestamp milisaniye
+  status:         string           // "Delivered", "Cancelled", "Returned" vs.
+  grossAmount?:   number           // sipariş toplam brüt tutarı (sipariş seviyesinde)
+  totalDiscount?: number           // toplam indirim
+  deliveryType?:  string           // "normal", "fast" vs. — products.deliveryType olarak kaydedilir
+  cargoDeci?:     number           // siparişin toplam desisi
+  lines:          TrendyolOrderLine[]
 }
 
 // ─── Ürünler ──────────────────────────────────────────────────────────────────
 
+export type TrendyolProductAttribute = {
+  attributeName:  string
+  attributeValue: string
+}
+
 // Trendyol'dan gelen ürün objesi
 export type TrendyolProduct = {
-  id: string             // Trendyol ürün ID'si (trendyolId olarak kaydediyoruz)
-  barcode: string        // barkod
-  title: string          // ürün adı
-  category: string       // kategori adı
-  brand: string          // marka adı
-  imageUrl: string       // ana görsel URL'si
-  price: number          // satış fiyatı (Trendyol'daki)
-  quantity: number       // stok adedi
-  approvalStatus: string // "Approved", "Rejected", "Waiting"
+  id:             string             // Trendyol ürün ID'si (trendyolId olarak kaydediyoruz)
+  barcode?:       string             // barkod (bazı ürünlerde yok)
+  title:          string             // ürün adı
+  categoryName?:  string             // kategori adı (API'da categoryName olarak gelir)
+  category?:      string             // alternatif alan adı
+  brandName?:     string             // marka adı (API'da brandName olarak gelir)
+  brand?:         string             // alternatif alan adı
+  images?:        Array<{ url: string }>  // görseller array olarak gelir — images[0].url kullan
+  imageUrl?:      string             // bazı yanıtlarda doğrudan string olarak gelebilir
+  listPrice?:     number             // liste fiyatı
+  salePrice?:     number             // satış fiyatı
+  price?:         number             // alternatif alan adı
+  quantity:       number             // stok adedi
+  approvalStatus?: string            // "Approved", "Rejected", "Waiting"
+  // Ek alanlar
+  productMainId?:      string        // model kodu / satıcı SKU
+  stockCode?:          string        // alternatif stok kodu
+  dimensionalWeight?:  number        // desi (boyutsal ağırlık)
+  deliveryOption?:     string | Record<string, unknown>  // string veya obje gelebilir
+  attributes?:         TrendyolProductAttribute[]  // renk, beden gibi varyant özellikleri
 }
 
 // ─── Settlements (Finance API) ────────────────────────────────────────────────

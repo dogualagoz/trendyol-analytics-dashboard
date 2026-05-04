@@ -12,6 +12,7 @@ import {
   BarChart3,
   Zap,
   Settings,
+  SlidersHorizontal,
 } from "lucide-react"
 import { Separator } from "@/components/ui/separator"
 
@@ -22,13 +23,14 @@ type NavItem = {
 }
 
 const navItems: NavItem[] = [
-  { label: "Dashboard",      href: "/",          icon: LayoutDashboard },
-  { label: "Ürünler",        href: "/products",  icon: Package },
-  { label: "Siparişler",     href: "/orders",    icon: ShoppingCart },
-  { label: "İadeler",        href: "/returns",   icon: RotateCcw },
-  { label: "Fiyatlandırma",  href: "/pricing",   icon: Calculator },
-  { label: "Raporlar",       href: "/reports",   icon: BarChart3 },
-  { label: "Canlı",          href: "/live",      icon: Zap },
+  { label: "Dashboard",       href: "/",                 icon: LayoutDashboard },
+  { label: "Ürünler",         href: "/products",         icon: Package },
+  { label: "Ürün Ayarları",   href: "/product-settings", icon: SlidersHorizontal },
+  { label: "Siparişler",      href: "/orders",           icon: ShoppingCart },
+  { label: "İadeler",         href: "/returns",          icon: RotateCcw },
+  { label: "Fiyatlandırma",   href: "/pricing",          icon: Calculator },
+  { label: "Raporlar",        href: "/reports",          icon: BarChart3 },
+  { label: "Canlı",           href: "/live",             icon: Zap },
 ]
 
 const bottomNavItems: NavItem[] = [
