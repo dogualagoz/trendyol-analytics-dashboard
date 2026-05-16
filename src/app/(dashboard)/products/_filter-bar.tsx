@@ -28,62 +28,76 @@ export function ProductFilterBar({ categories, brands }: Props) {
   const sp = useSearchParams()
   const [isPending, startTransition] = useTransition()
 
-  const [search,   setSearch]   = useState(sp.get("search")   ?? "")
-  const [category, setCategory] = useState(sp.get("category") ?? "")
-  const [brand,    setBrand]    = useState(sp.get("brand")    ?? "")
-  const [hasCost,  setHasCost]  = useState(sp.get("hasCost")  ?? "")
-  const [sort,     setSort]     = useState(
-    sp.get("sortBy") && sp.get("sortDir")
-      ? `${sp.get("sortBy")}_${sp.get("sortDir")}`
-      : "createdAt_desc"
-  )
+  // Metin araması local state'te tutulur (her tuşta navigate edilmez)
+  const [search, setSearch] = useState(sp.get("search") ?? "")
 
-  function apply() {
-    const p = new URLSearchParams()
-    if (search)   p.set("search",   search)
-    if (category) p.set("category", category)
-    if (brand)    p.set("brand",    brand)
-    if (hasCost)  p.set("hasCost",  hasCost)
-    const [sortBy, sortDir] = sort.split("_") as [string, string]
-    p.set("sortBy",  sortBy)
-    p.set("sortDir", sortDir)
+  // Select değerleri doğrudan URL'den okunur — local state'e gerek yok
+  const category = sp.get("category") ?? ""
+  const brand    = sp.get("brand")    ?? ""
+  const hasCost  = sp.get("hasCost")  ?? ""
+  const sortBy   = sp.get("sortBy")   ?? "createdAt"
+  const sortDir  = sp.get("sortDir")  ?? "desc"
+  const sort     = `${sortBy}_${sortDir}`
+
+  // Mevcut URL parametrelerine patch uygulayıp navigate eder
+  function navigate(patch: Record<string, string>) {
+    const p = new URLSearchParams(sp.toString())
+    for (const [k, v] of Object.entries(patch)) {
+      if (v) p.set(k, v); else p.delete(k)
+    }
     startTransition(() => router.push(`?${p.toString()}`))
   }
 
+  function applySearch() {
+    navigate({ search })
+  }
+
   function clear() {
-    setSearch(""); setCategory(""); setBrand(""); setHasCost(""); setSort("createdAt_desc")
+    setSearch("")
     startTransition(() => router.push("?"))
   }
 
-  const hasActive = !!(search || category || brand || hasCost || sort !== "createdAt_desc")
+  const hasActive = !!(category || brand || hasCost || search || sort !== "createdAt_desc")
 
   return (
     <div className="bg-white rounded-xl border border-[#E8E8E8] shadow-sm p-4 space-y-3">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2.5">
-        {/* Arama */}
+        {/* Arama — Enter veya "Ara" butonu ile uygulanır */}
         <input
           type="text"
           placeholder="Ürün adı veya barkod…"
           value={search}
           onChange={e => setSearch(e.target.value)}
-          onKeyDown={e => e.key === "Enter" && apply()}
+          onKeyDown={e => e.key === "Enter" && applySearch()}
           className={inp}
         />
 
-        {/* Kategori */}
-        <select value={category} onChange={e => setCategory(e.target.value)} className={sel}>
+        {/* Kategori — anlık uygulama */}
+        <select
+          value={category}
+          onChange={e => navigate({ category: e.target.value })}
+          className={sel}
+        >
           <option value="">Tüm kategoriler</option>
           {categories.map(c => <option key={c} value={c}>{c}</option>)}
         </select>
 
-        {/* Marka */}
-        <select value={brand} onChange={e => setBrand(e.target.value)} className={sel}>
+        {/* Marka — anlık uygulama */}
+        <select
+          value={brand}
+          onChange={e => navigate({ brand: e.target.value })}
+          className={sel}
+        >
           <option value="">Tüm markalar</option>
           {brands.map(b => <option key={b} value={b}>{b}</option>)}
         </select>
 
-        {/* Maliyet durumu */}
-        <select value={hasCost} onChange={e => setHasCost(e.target.value)} className={sel}>
+        {/* Maliyet durumu — anlık uygulama */}
+        <select
+          value={hasCost}
+          onChange={e => navigate({ hasCost: e.target.value })}
+          className={sel}
+        >
           <option value="">Maliyet: hepsi</option>
           <option value="yes">Maliyet girilmiş</option>
           <option value="no">Maliyet girilmemiş</option>
@@ -91,21 +105,29 @@ export function ProductFilterBar({ categories, brands }: Props) {
       </div>
 
       <div className="flex items-center gap-2.5">
-        {/* Sıralama */}
+        {/* Sıralama — anlık uygulama */}
         <div className="flex items-center gap-2 flex-1">
           <ArrowUpDown className="w-3.5 h-3.5 text-[#8b7264] shrink-0" />
-          <select value={sort} onChange={e => setSort(e.target.value)} className={`${sel} flex-1`}>
+          <select
+            value={sort}
+            onChange={e => {
+              const [sb, ...rest] = e.target.value.split("_")
+              navigate({ sortBy: sb, sortDir: rest.join("_") })
+            }}
+            className={`${sel} flex-1`}
+          >
             {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
 
+        {/* Metin araması için buton */}
         <button
-          onClick={apply}
+          onClick={applySearch}
           disabled={isPending}
           className="flex items-center gap-1.5 px-4 h-9 rounded-lg bg-[#F27A1A] text-white text-sm font-medium hover:bg-[#984700] transition-colors disabled:opacity-60"
         >
           <Filter className="w-3.5 h-3.5" />
-          {isPending ? "Yükleniyor…" : "Uygula"}
+          {isPending ? "Yükleniyor…" : "Ara"}
         </button>
 
         {hasActive && (
