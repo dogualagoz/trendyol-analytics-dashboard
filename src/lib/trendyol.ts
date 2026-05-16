@@ -11,6 +11,7 @@ import type {
 } from "@/types/trendyol"
 
 const BASE_URL = "https://apigw.trendyol.com"
+const IS_DEV   = process.env.NODE_ENV !== "production"
 
 // ─── Auth Header ─────────────────────────────────────────────────────────────
 
@@ -72,7 +73,7 @@ export async function getOrders(params: GetOrdersParams): Promise<TrendyolOrder[
     })
 
     const url = `${BASE_URL}/integration/order/sellers/${sellerId}/orders?${query}`
-    console.log("[trendyol] GET", url)
+    if (IS_DEV) console.log("[trendyol] GET", url)
 
     const res = await fetch(url, { headers })
 
@@ -92,7 +93,7 @@ export async function getOrders(params: GetOrdersParams): Promise<TrendyolOrder[
     const content = data.content ?? []
 
     // İlk sayfada ham yanıtı ve ilk sipariş yapısını logla — alan adlarını görmek için
-    if (page === 0) {
+    if (IS_DEV && page === 0) {
       console.log("[trendyol] Sipariş yanıtı (page 0):", JSON.stringify({
         totalElements: data.totalElements,
         totalPages: data.totalPages,
@@ -187,7 +188,7 @@ export async function getSettlements(params: GetSettlementsParams): Promise<Tren
     })
 
     const url = `${BASE_URL}/integration/finance/sellers/${sellerId}/settlements?${query}`
-    console.log("[trendyol] GET settlements", url)
+    if (IS_DEV) console.log("[trendyol] GET settlements", url)
 
     const res = await fetch(url, { headers })
 
@@ -203,7 +204,7 @@ export async function getSettlements(params: GetSettlementsParams): Promise<Tren
     const data = raw as TrendyolPage<TrendyolSettlement>
 
     // İlk sayfada ham yapıyı logla — alan adlarını doğrulamak için
-    if (page === 0 && (data.content ?? []).length > 0) {
+    if (IS_DEV && page === 0 && (data.content ?? []).length > 0) {
       console.log("[trendyol] İlk settlement satırı:", JSON.stringify(data.content[0], null, 2))
     }
 
