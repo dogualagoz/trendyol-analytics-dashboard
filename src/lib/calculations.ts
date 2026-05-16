@@ -100,6 +100,37 @@ export function calculateCargoWithKdv(
   return Math.round(base * (1 + CARGO_KDV_RATE) * 100) / 100
 }
 
+// ─── OrderItem Kar Yeniden Hesabı ────────────────────────────────────────────
+
+// Kayıtlı sipariş kalemi verisinden kar hesaplar.
+// OrderItem'da `commission` alan adı, Trendyol'dan gelen oranı (%) depolar.
+// costPrice güncellendikten sonra DB'deki profit değerini güncellemek için kullanılır.
+export function recalcOrderItemProfit(
+  item: {
+    salePrice:  unknown
+    quantity:   number
+    discount:   unknown
+    commission: unknown  // oran (%) olarak saklanır
+    cargoShare: unknown
+  },
+  costPrice: number
+): number {
+  const price          = Number(item.salePrice) || 0
+  const qty            = item.quantity          || 1
+  const commissionAmt  = price * qty * (Number(item.commission) || 0) / 100
+  return calculateProfit({
+    salePrice:  price,
+    quantity:   qty,
+    discount:   Number(item.discount)   || 0,
+    commission: commissionAmt,
+    cargoShare: Number(item.cargoShare) || 0,
+    serviceFee: 0,
+    stoppage:   0,
+    netKdv:     0,
+    costPrice,
+  })
+}
+
 // ─── Oran Hesaplamaları ───────────────────────────────────────────────────────
 
 // Kar / Satış Fiyatı oranı — "Satışın yüzde kaçı kar?"

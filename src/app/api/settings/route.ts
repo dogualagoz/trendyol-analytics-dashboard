@@ -11,6 +11,7 @@ const KEYS = [
   "cargo_tier_1",
   "cargo_tier_2",
   "cargo_tier_3",
+  "usd_to_try_rate",
 ] as const
 
 // GET /api/settings — mevcut ayarları döner, sayfa açılınca formu doldurmak için kullanılır

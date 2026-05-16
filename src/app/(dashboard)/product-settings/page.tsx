@@ -12,6 +12,9 @@ import {
   CheckCircle,
   AlertCircle,
   RefreshCw,
+  Scissors,
+  ArrowDownLeft,
+  ArrowUpDown,
 } from "lucide-react"
 import type { ProductForSettings } from "@/lib/product-settings"
 
@@ -35,6 +38,8 @@ type Filters = {
   minDesi: string
   maxDesi: string
   emptyOnly: boolean
+  sortBy: string
+  sortDir: string
 }
 
 const EMPTY_FILTERS: Filters = {
@@ -49,7 +54,21 @@ const EMPTY_FILTERS: Filters = {
   minDesi: "",
   maxDesi: "",
   emptyOnly: false,
+  sortBy: "title",
+  sortDir: "asc",
 }
+
+const SORT_OPTIONS = [
+  { value: "title_asc",       label: "İsim A → Z" },
+  { value: "title_desc",      label: "İsim Z → A" },
+  { value: "costPrice_asc",   label: "Maliyet düşük → yüksek" },
+  { value: "costPrice_desc",  label: "Maliyet yüksek → düşük" },
+  { value: "stockQty_desc",   label: "Stok çok → az" },
+  { value: "stockQty_asc",    label: "Stok az → çok" },
+  { value: "returnRate_desc", label: "İade oranı yüksek → düşük" },
+  { value: "createdAt_desc",  label: "En yeni eklenen" },
+  { value: "createdAt_asc",   label: "En eski eklenen" },
+]
 
 // ─── Editable Cell ────────────────────────────────────────────────────────────
 
@@ -151,6 +170,8 @@ function buildQuery(f: Filters): string {
   if (f.minDesi)   p.set("minDesi",   f.minDesi)
   if (f.maxDesi)   p.set("maxDesi",   f.maxDesi)
   if (f.emptyOnly) p.set("emptyOnly", "true")
+  if (f.sortBy)    p.set("sortBy",    f.sortBy)
+  if (f.sortDir)   p.set("sortDir",   f.sortDir)
   return p.toString()
 }
 
@@ -164,15 +185,16 @@ function sharedValue<T extends string | null>(products: ProductForSettings[], fi
 
 function RangeVal({ products, field, suffix = "" }: {
   products: ProductForSettings[]
-  field: "costPrice" | "costKdvRate" | "desi" | "extraCost"
+  field: "costPrice" | "costKdvRate" | "desi" | "extraCost" | "fabricCostTry"
   suffix?: string
 }) {
   const vals = products.map(p => p[field]).filter((v): v is number => v != null)
   if (!vals.length) return <span className="text-[#d1cac5] text-xs">—</span>
   const min = Math.min(...vals), max = Math.max(...vals)
+  const fmt = (v: number) => Number.isInteger(v) ? v.toString() : v.toFixed(2)
   return (
     <span className="text-xs tabular-nums font-medium text-[#574236]">
-      {min === max ? `${min}${suffix}` : `${min}${suffix} – ${max}${suffix}`}
+      {min === max ? `${fmt(min)}${suffix}` : `${fmt(min)}${suffix} – ${fmt(max)}${suffix}`}
     </span>
   )
 }
@@ -184,6 +206,7 @@ const W = {
   info:         "w-[340px] min-w-[340px]",
   barcode:      "w-[150px] min-w-[150px]",
   costPrice:    "w-[140px] min-w-[140px]",
+  fabricCost:   "w-[170px] min-w-[170px]",
   costKdvRate:  "w-[104px] min-w-[104px]",
   desi:         "w-[80px]  min-w-[80px]",
   extraCost:    "w-[120px] min-w-[120px]",
@@ -207,6 +230,8 @@ export default function ProductSettingsPage() {
   const [activeFilters, setActiveFilters] = useState<Filters>(EMPTY_FILTERS)
   const [loading, setLoading]             = useState(true)
   const [saveState, setSaveState]         = useState<Record<string, "saving" | "ok" | "error">>({})
+  const [bulkApplying, setBulkApplying]   = useState(false)
+  const [bulkResult, setBulkResult]       = useState<{ applied: number; skipped: number } | null>(null)
 
   const fetchProducts = useCallback(async (filters: Filters) => {
     setLoading(true)
@@ -254,7 +279,47 @@ export default function ProductSettingsPage() {
     }
   }
 
+  // Tek ürünün kumaş maliyetini costPrice'a uygula
+  async function applyFabricCost(product: ProductForSettings) {
+    if (product.fabricCostTry == null) return
+    await saveField(product.id, "costPrice", product.fabricCostTry)
+  }
+
+  // Filtrelenen tüm ürünlerin kumaş maliyetini costPrice'a uygula.
+  // Boyutu ayrıştırılamayan veya zaten aynı maliyete sahip ürünler atlanır.
+  async function applyFabricCostBulk() {
+    setBulkApplying(true)
+    setBulkResult(null)
+    let applied = 0
+    let skipped = 0
+    try {
+      for (const group of groups) {
+        for (const product of group.products) {
+          if (product.fabricCostTry == null) {
+            skipped++
+            continue
+          }
+          // Mevcut maliyet zaten kumaş maliyetiyle birebir aynıysa tekrar yazma
+          if (product.costPrice != null && Math.abs(product.costPrice - product.fabricCostTry) < 0.01) {
+            skipped++
+            continue
+          }
+          await saveField(product.id, "costPrice", product.fabricCostTry)
+          applied++
+        }
+      }
+      setBulkResult({ applied, skipped })
+    } finally {
+      setBulkApplying(false)
+      setTimeout(() => setBulkResult(null), 5000)
+    }
+  }
+
   const totalProducts = groups.reduce((s, g) => s + g.products.length, 0)
+  const fabricEligibleCount = groups.reduce(
+    (s, g) => s + g.products.filter(p => p.fabricCostTry != null).length,
+    0
+  )
 
   const inp = "w-full rounded-lg border border-[#E8E8E8] px-3 h-9 text-sm text-[#1a1c1c] placeholder:text-[#c0bbb7] focus:outline-none focus:border-[#F27A1A] focus:ring-2 focus:ring-[#F27A1A]/10 bg-white transition-all"
 
@@ -308,7 +373,22 @@ export default function ProductSettingsPage() {
           </label>
         </div>
 
-        <div className="flex items-center gap-2 pt-0.5">
+        <div className="flex items-center gap-2 pt-0.5 flex-wrap">
+          {/* Sıralama */}
+          <div className="flex items-center gap-1.5 flex-1 min-w-[220px]">
+            <ArrowUpDown className="w-3.5 h-3.5 text-[#8b7264] shrink-0" />
+            <select
+              value={`${draftFilters.sortBy}_${draftFilters.sortDir}`}
+              onChange={e => {
+                const [sortBy, ...rest] = e.target.value.split("_")
+                setDraftFilters(f => ({ ...f, sortBy, sortDir: rest.join("_") }))
+              }}
+              className={`${inp} appearance-none flex-1`}
+            >
+              {SORT_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+            </select>
+          </div>
+
           <button
             onClick={() => setActiveFilters({ ...draftFilters })}
             className="flex items-center gap-1.5 px-4 h-8 rounded-lg bg-[#F27A1A] text-white text-sm font-medium hover:bg-[#984700] transition-colors"
@@ -324,21 +404,50 @@ export default function ProductSettingsPage() {
         </div>
       </div>
 
-      {/* ── Excel Placeholder ── */}
-      <div className="bg-white rounded-xl border border-dashed border-[#F0D5C4] px-4 py-3.5">
-        <div className="flex items-center gap-3">
-          <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center shrink-0">
-            <Upload className="w-4 h-4 text-[#F27A1A]" />
+      {/* ── Toplu İşlemler ── */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {/* Kumaş Maliyetinden Uygula */}
+        <div className="bg-white rounded-xl border border-[#F0D5C4] px-4 py-3.5">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-orange-50 flex items-center justify-center shrink-0">
+              <Scissors className="w-4 h-4 text-[#F27A1A]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-[#1a1c1c]">Kumaş Maliyetini Uygula</p>
+              <p className="text-xs text-[#8b7264] mt-0.5">
+                {bulkResult
+                  ? <span className="text-[#F27A1A] font-medium">{bulkResult.applied} ürün güncellendi · {bulkResult.skipped} atlandı</span>
+                  : <>Boyutu ayrıştırılan {fabricEligibleCount.toLocaleString("tr-TR")} ürünün maliyetini kumaş hesabıyla doldur</>
+                }
+              </p>
+            </div>
+            <button
+              onClick={applyFabricCostBulk}
+              disabled={bulkApplying || fabricEligibleCount === 0}
+              className="flex items-center gap-1.5 px-3 h-8 rounded-lg bg-[#F27A1A] text-white text-sm font-medium hover:bg-[#984700] transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {bulkApplying ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Scissors className="w-3.5 h-3.5" />}
+              {bulkApplying ? "Uygulanıyor…" : "Tümüne Uygula"}
+            </button>
           </div>
-          <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium text-[#1a1c1c]">Toplu Maliyet Yükleme</p>
-            <p className="text-xs text-[#8b7264] mt-0.5">
-              Excel ile toplu güncelleme — <span className="text-[#F27A1A] font-medium">yakında</span>
-            </p>
+        </div>
+
+        {/* Excel Placeholder */}
+        <div className="bg-white rounded-xl border border-dashed border-[#E8E8E8] px-4 py-3.5">
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-[#F4F4F4] flex items-center justify-center shrink-0">
+              <Upload className="w-4 h-4 text-[#8b7264]" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-[#1a1c1c]">Toplu Maliyet Yükleme</p>
+              <p className="text-xs text-[#8b7264] mt-0.5">
+                Excel ile toplu güncelleme — <span className="text-[#F27A1A] font-medium">yakında</span>
+              </p>
+            </div>
+            <button disabled className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-[#E8E8E8] text-sm text-[#c0bbb7] cursor-not-allowed">
+              <Upload className="w-3.5 h-3.5" /> Excel Yükle
+            </button>
           </div>
-          <button disabled className="flex items-center gap-1.5 px-3 h-8 rounded-lg border border-[#E8E8E8] text-sm text-[#c0bbb7] cursor-not-allowed">
-            <Upload className="w-3.5 h-3.5" /> Excel Yükle
-          </button>
         </div>
       </div>
 
@@ -361,7 +470,7 @@ export default function ProductSettingsPage() {
 
         {/* Tablo */}
         <div className="overflow-auto [overflow-anchor:none]" style={{ maxHeight: "calc(100vh - 180px)" }}>
-          <table className="border-collapse w-full" style={{ minWidth: "1440px" }}>
+          <table className="border-collapse w-full" style={{ minWidth: "1610px" }}>
 
             <thead className="sticky top-0 z-10">
               <tr>
@@ -371,6 +480,10 @@ export default function ProductSettingsPage() {
                 <th className={`${TH} ${W.costPrice}`}>
                   Maliyet
                   <span className="block font-normal normal-case tracking-normal text-[#b0a49e] mt-0.5">KDV Dahil (₺)</span>
+                </th>
+                <th className={`${TH} ${W.fabricCost}`}>
+                  Kumaş Maliyeti
+                  <span className="block font-normal normal-case tracking-normal text-[#b0a49e] mt-0.5">Boyuttan Hesap (₺)</span>
                 </th>
                 <th className={`${TH} ${W.costKdvRate}`}>
                   KDV
@@ -394,13 +507,13 @@ export default function ProductSettingsPage() {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan={14} className="py-20 text-center">
+                  <td colSpan={15} className="py-20 text-center">
                     <RefreshCw className="w-6 h-6 text-[#dec1b1] mx-auto animate-spin" />
                   </td>
                 </tr>
               ) : groups.length === 0 ? (
                 <tr>
-                  <td colSpan={14} className="py-20 text-center">
+                  <td colSpan={15} className="py-20 text-center">
                     <Package className="w-10 h-10 text-[#dec1b1] mx-auto mb-3" />
                     <p className="text-sm font-medium text-[#1a1c1c]">Ürün bulunamadı</p>
                     <p className="text-xs text-[#8b7264] mt-1">Filtreleri değiştirin veya önce sync yapın.</p>
@@ -414,6 +527,7 @@ export default function ProductSettingsPage() {
                   saveState={saveState}
                   onSave={saveField}
                   onLocalUpdate={updateLocal}
+                  onApplyFabric={applyFabricCost}
                 />
               ))}
             </tbody>
@@ -432,12 +546,14 @@ function GroupSection({
   saveState,
   onSave,
   onLocalUpdate,
+  onApplyFabric,
 }: {
   group: VariantGroup
   onToggle: () => void
   saveState: Record<string, "saving" | "ok" | "error">
   onSave: (id: string, field: "costPrice" | "costKdvRate" | "desi" | "extraCost", val: number | null) => void
   onLocalUpdate: (id: string, patch: Partial<ProductForSettings>) => void
+  onApplyFabric: (product: ProductForSettings) => void
 }) {
   const isMulti = group.products.length > 1
   const first   = group.products[0]
@@ -456,6 +572,7 @@ function GroupSection({
         onToggle={() => {}}
         saveState={saveState}
         onSave={handleSave}
+        onApplyFabric={onApplyFabric}
         isSubRow={false}
       />
     )
@@ -496,6 +613,7 @@ function GroupSection({
         <td className={`${TD} ${W.barcode}`}><span className="text-[#d1cac5] text-xs">—</span></td>
 
         <td className={`${TD} ${W.costPrice}`}><RangeVal products={group.products} field="costPrice" suffix="₺" /></td>
+        <td className={`${TD} ${W.fabricCost}`}><RangeVal products={group.products} field="fabricCostTry" suffix="₺" /></td>
         <td className={`${TD} ${W.costKdvRate}`}><RangeVal products={group.products} field="costKdvRate" suffix="%" /></td>
         <td className={`${TD} ${W.desi}`}><RangeVal products={group.products} field="desi" /></td>
         <td className={`${TD} ${W.extraCost}`}><RangeVal products={group.products} field="extraCost" suffix="₺" /></td>
@@ -535,6 +653,7 @@ function GroupSection({
           variantTotal={group.products.length}
           saveState={saveState}
           onSave={handleSave}
+          onApplyFabric={onApplyFabric}
           isSubRow
         />
       ))}
@@ -552,6 +671,7 @@ function ProductRow({
   variantTotal,
   saveState,
   onSave,
+  onApplyFabric,
 }: {
   product: ProductForSettings
   isGroup: boolean
@@ -561,6 +681,7 @@ function ProductRow({
   variantTotal?: number
   saveState: Record<string, "saving" | "ok" | "error">
   onSave: (id: string, field: "costPrice" | "costKdvRate" | "desi" | "extraCost", val: number | null) => void
+  onApplyFabric: (product: ProductForSettings) => void
   isSubRow?: boolean
 }) {
   const state = saveState[product.id]
@@ -607,6 +728,11 @@ function ProductRow({
       <td className={`${TD} ${W.costPrice} py-1.5`}>
         <EditableCell value={product.costPrice} suffix="₺" allowNull
           onSave={v => onSave(product.id, "costPrice", v)} />
+      </td>
+
+      {/* Kumaş Maliyeti — boyuttan otomatik hesap */}
+      <td className={`${TD} ${W.fabricCost} py-1.5`}>
+        <FabricCostCell product={product} onApply={() => onApplyFabric(product)} />
       </td>
 
       {/* Maliyet KDV Oranı */}
@@ -714,6 +840,55 @@ function ProductImage({ src, title }: { src: string | null; title: string }) {
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+// Kumaş bazlı maliyet hücresi.
+// Boyut ayrıştırılan ürünlerde hesaplanan TL maliyeti gösterir; "Uygula" butonu
+// ile bu değeri ürünün costPrice alanına yazar. Mevcut maliyet zaten kumaş
+// hesabına eşitse buton "Uygulandı" olarak görünür.
+function FabricCostCell({
+  product,
+  onApply,
+}: {
+  product: ProductForSettings
+  onApply: () => void
+}) {
+  if (product.fabricCostTry == null || product.fabricWidthCm == null || product.fabricLengthCm == null) {
+    return (
+      <div className="flex items-center h-8 px-2">
+        <span className="text-[#d1cac5] text-xs italic">boyut yok</span>
+      </div>
+    )
+  }
+
+  const isApplied =
+    product.costPrice != null &&
+    Math.abs(product.costPrice - product.fabricCostTry) < 0.01
+
+  return (
+    <div className="flex items-center gap-1.5 h-8 px-1">
+      <div className="flex flex-col leading-tight min-w-0 flex-1">
+        <span className="text-sm font-medium text-[#984700] tabular-nums">
+          {product.fabricCostTry.toFixed(2)} ₺
+        </span>
+        <span className="text-[10px] text-[#8b7264] tabular-nums">
+          {product.fabricWidthCm}×{product.fabricLengthCm} cm
+        </span>
+      </div>
+      <button
+        onClick={onApply}
+        disabled={isApplied}
+        title={isApplied ? "Maliyet zaten kumaş hesabına eşit" : "Kumaş maliyetini ürün maliyetine uygula"}
+        className={`shrink-0 inline-flex items-center justify-center w-6 h-6 rounded-md transition-colors ${
+          isApplied
+            ? "bg-emerald-50 text-emerald-600 cursor-default"
+            : "bg-orange-50 text-[#F27A1A] hover:bg-[#F27A1A] hover:text-white"
+        }`}
+      >
+        {isApplied ? <CheckCircle className="w-3.5 h-3.5" /> : <ArrowDownLeft className="w-3.5 h-3.5" />}
+      </button>
     </div>
   )
 }

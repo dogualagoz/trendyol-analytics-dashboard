@@ -3,11 +3,17 @@ import {
   getProductsForSettings,
   updateProductSettings,
   type ProductSettingsUpdate,
+  type ProductSortBy,
+  type SortDir,
 } from "@/lib/product-settings"
+
+const VALID_SORT_FIELDS: ProductSortBy[] = ["title", "costPrice", "stockQty", "returnRate", "createdAt"]
 
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams
+    const sortByRaw = sp.get("sortBy") as ProductSortBy | null
+    const sortDirRaw = sp.get("sortDir") as SortDir | null
     const products = await getProductsForSettings({
       search:    sp.get("search")    ?? undefined,
       barcode:   sp.get("barcode")   ?? undefined,
@@ -20,6 +26,8 @@ export async function GET(req: NextRequest) {
       maxStock:  sp.get("maxStock")  ? Number(sp.get("maxStock"))  : undefined,
       minDesi:   sp.get("minDesi")   ? Number(sp.get("minDesi"))   : undefined,
       maxDesi:   sp.get("maxDesi")   ? Number(sp.get("maxDesi"))   : undefined,
+      sortBy:    sortByRaw && VALID_SORT_FIELDS.includes(sortByRaw) ? sortByRaw : undefined,
+      sortDir:   sortDirRaw === "asc" || sortDirRaw === "desc" ? sortDirRaw : undefined,
     })
     return NextResponse.json({ products })
   } catch (err) {

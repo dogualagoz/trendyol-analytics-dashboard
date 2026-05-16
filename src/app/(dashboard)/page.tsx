@@ -16,6 +16,7 @@ import {
 } from "@/lib/dashboard"
 import { formatCurrency, formatPercent, formatNumber } from "@/lib/utils"
 import { DashboardHeader } from "./_dashboard-header"
+import { InfoTooltip } from "@/components/ui/info-tooltip"
 
 // ── Sabitler ──────────────────────────────────────────────────────────────────
 
@@ -35,10 +36,11 @@ type MetricCardProps = {
   icon:      React.ElementType
   iconBg:    string
   iconColor: string
+  tooltip?:  string
 }
 
 // KPI kartı — design.md label-caps + data-tabular + error-container trend renkleri
-function MetricCard({ title, value, trend, icon: Icon, iconBg, iconColor }: MetricCardProps) {
+function MetricCard({ title, value, trend, icon: Icon, iconBg, iconColor, tooltip }: MetricCardProps) {
   const isPos     = trend >= 0
   const TrendIcon = isPos ? TrendingUp : TrendingDown
 
@@ -46,9 +48,12 @@ function MetricCard({ title, value, trend, icon: Icon, iconBg, iconColor }: Metr
     <div className="bg-white rounded-xl border border-[#E2E2E2] shadow-[0px_4px_20px_rgba(0,0,0,0.04)] p-6 flex flex-col gap-4">
       {/* label-caps: 11px / 700 / uppercase / 0.05em tracking */}
       <div className="flex items-start justify-between">
-        <p className="text-[11px] font-bold text-[#574236] uppercase tracking-[0.05em] leading-none">
-          {title}
-        </p>
+        <div className="flex items-center gap-1.5">
+          <p className="text-[11px] font-bold text-[#574236] uppercase tracking-[0.05em] leading-none">
+            {title}
+          </p>
+          {tooltip && <InfoTooltip text={tooltip} className="text-[#574236]" />}
+        </div>
         <div
           className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
           style={{ backgroundColor: iconBg }}
@@ -143,6 +148,7 @@ export default async function DashboardPage({
           trend={t.totalRevenue}
           icon={Banknote}
           iconBg="#ffdbc8" iconColor="#984700"
+          tooltip="Seçili dönemdeki toplam brüt satış tutarı. İndirim, komisyon ve diğer kesintiler henüz düşülmemiştir."
         />
         <MetricCard
           title="Maliyeti Olan Ciro"
@@ -150,6 +156,7 @@ export default async function DashboardPage({
           trend={t.revenueWithCost}
           icon={BarChart2}
           iconBg="#ffdbc8" iconColor="#984700"
+          tooltip="Ürün maliyeti girilmiş ürünlerin toplam satış tutarı. Kârlılık hesabına dahil edilebilen ciro."
         />
         <MetricCard
           title="Kâr Tutarı"
@@ -157,6 +164,7 @@ export default async function DashboardPage({
           trend={t.netProfit}
           icon={Wallet}
           iconBg="#b7eaff" iconColor="#00677f"
+          tooltip="Komisyon, kargo, KDV, stopaj ve ürün maliyetleri düşüldükten sonra elde edilen net kâr."
         />
         <MetricCard
           title="Kâr / Satış Oranı"
@@ -164,6 +172,7 @@ export default async function DashboardPage({
           trend={t.profitToSalesRatio}
           icon={Percent}
           iconBg="#ede9fe" iconColor="#7C3AED"
+          tooltip="Net kârın toplam ciroya oranı (kâr marjı). Yükseldikçe her satıştan daha fazla kâr elde edildiğini gösterir."
         />
         <MetricCard
           title="Kâr / Ürün Maliyeti"
@@ -171,6 +180,7 @@ export default async function DashboardPage({
           trend={t.profitToProductCostRatio}
           icon={TrendingUp}
           iconBg="#d8e3fb" iconColor="#3c475a"
+          tooltip="Net kârın toplam ürün maliyetine oranı. Yatırım getirisi (ROI) olarak da bilinir — 1₺ maliyete kaç kuruş kâr döndüğünü gösterir."
         />
       </div>
 
